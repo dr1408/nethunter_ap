@@ -40,7 +40,7 @@ replace it in the 5th line
 
 7.python3 passapi.py
 
-8. deauth your target network with external adapter
+8. deauth your target network with external adapter and make sure adapter is recognised as wlan2
 
 9.nano hostapd.conf and change network name tenda to your target network name
 
