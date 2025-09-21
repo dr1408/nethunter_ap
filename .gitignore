@@ -1,0 +1,11 @@
+# Ignore sensitive data files
+attempts.txt
+password.txt
+*.txt
+evil.cap
+*.cap
+
+# Ignore other common unnecessary files
+.env
+*.log
+__pycache__/
