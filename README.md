@@ -1,6 +1,12 @@
 Nethunter AP
 
 This eviltwin script lets you run a fake access point portal with handshake verification using a virtually created wlan1 on Kali Nethunter. You only need one external adapter for deauthing the original network.
+Dependencies 
+
+```bash
+apt install aircrack-ng php python3 python3-pip ethtool
+pip3 install flask
+```
 
 Usage
 
@@ -8,6 +14,7 @@ Usage
 git clone https://github.com/dr1408/nethunter_ap.git
 cd nethunter_ap
 ```
+Turn of Wifi .. Turn on Cellular data (4g)
 
 Plug in your wireless adapter
 
