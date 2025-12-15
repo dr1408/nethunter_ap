@@ -1,6 +1,8 @@
 Nethunter AP
 
 This eviltwin script lets you run a fake access point portal with handshake verification using a virtually created wlan1 on Kali Nethunter. You only need one external adapter for deauthing the original network.
+
+
 Dependencies 
 
 ```bash
