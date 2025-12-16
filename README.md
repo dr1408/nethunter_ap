@@ -7,7 +7,7 @@ Dependencies
 
 ```bash
 apt install aircrack-ng php python3 python3-pip ethtool
-pip3 install flask
+pip3 install flask requests
 ```
 
 Usage
