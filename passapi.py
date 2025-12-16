@@ -4,9 +4,9 @@ import time, os
 from datetime import datetime
 
 # Configuration - will be updated by main script
-target = 'CC:2D:21:61:71:58'
-ssid_name = 'Tenda_Saad'
-handshake_file = 'Tenda_Saad.cap'
+target = 'D8:29:18:E2:B8:D0'
+ssid_name = 'Saad'
+handshake_file = 'Saad.cap'
 
 # Enhanced validation
 if len(target) != 17:

