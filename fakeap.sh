@@ -1,26 +1,36 @@
 #!/bin/bash
+if [ "$EUID" != 0 ]; then
+    echo "Run it as root"
+    exit 1
+fi
+dependencies="iw ip iptables ifconfig hostapd dnsmasq dnsspoof"
+for d in $dependencies; do
+	if ! command -v $d >/dev/null 2>&1; then
+        echo "$d not found"
+		exit 1
+	fi
+done
 echo "Checking default rule number.."
 for table in $(ip rule list | awk -F"lookup" '{print $2}'); do
-DEF=`ip route show table $table|grep default|grep wlan0`
-  if ! [ -z "$DEF" ]; then
-     break
-  fi
+    DEF="$(ip route show table $table|grep default|grep wlan0)"
+	if ! [ -z "$DEF" ]; then
+		 break
+	fi
 done
 echo "Default rule number is $table"
 echo "Checking for existing wlan1 interface..."
 if ip link show wlan1; then
-  echo "wlan 1 exists, continuing.."
+	echo "wlan1 exists, continuing.."
 else
-  if [[ `iw list | grep '* AP'` == *"* AP"* ]]; then
-    echo "wlan0 supports AP mode, creating AP interface.."
-    iw dev wlan0 interface add wlan1 type __ap
-    ip addr flush wlan1
-    ip addr flush wlan1
-    ip link set up dev wlan1
-  else
-    echo "wlan0 doesn't support AP mode, exiting.."
-    exit 0
-  fi
+    if [[ "$(iw list | grep '* AP')" == *"* AP"* ]]; then
+		echo "wlan0 supports AP mode, creating AP interface.."
+		iw dev wlan0 interface add wlan1 type __ap
+		ip addr flush wlan1
+		ip link set up dev wlan1
+	else
+		echo "wlan0 doesn't support AP mode, exiting.."
+		exit 1
+	fi
 fi
 echo "Adding iptables for internet sharing..."
 iptables --flush
@@ -39,9 +49,11 @@ ip rule add from all iif lo oif wlan0 lookup $table pref 17000 2> /dev/null
 ip rule add from all iif lo oif wlan1 lookup 97 pref 17000 2> /dev/null
 ip rule add from all iif wlan1 lookup $table pref 21000 2> /dev/null
 
-echo "Starting"
-sleep 5 && sudo hostapd hostapd.conf &
+echo "Starting hostapd"
+hostapd hostapd.conf &
 sleep 5
-sudo dnsmasq -C dnsmasq.conf &
+echo "Starting dnsmasq"
+dnsmasq -C dnsmasq.conf &
 sleep 5
-sudo nohup dnsspoof -i wlan1 > /dev/null 2>&1 &
+echo "Starting dnsspoof"
+nohup dnsspoof -i wlan1 > /dev/null 2>&1 &
