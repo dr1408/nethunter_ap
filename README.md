@@ -6,7 +6,7 @@ This eviltwin script lets you run a fake access point portal with handshake veri
 Dependencies 
 
 ```bash
-apt install aircrack-ng php python3 python3-pip ethtool
+apt install aircrack-ng php python3 python3-pip ethtool dsniff
 pip3 install flask requests
 ```
 
@@ -16,7 +16,6 @@ Usage
 git clone https://github.com/dr1408/nethunter_ap.git
 cd nethunter_ap
 ```
-Turn of Wifi .. Turn on Cellular data (4g)
 
 Plug in your wireless adapter
 
