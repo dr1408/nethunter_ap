@@ -7,16 +7,16 @@ DEF=`ip route show table $table|grep default|grep rmnet_data2`
   fi
 done
 echo "Default rule number is $table"
-echo "Checking for existing wlan1 interface..."
-if ip link show wlan1; then
-  echo "wlan 1 exists, continuing.."
+echo "Checking for existing wlan2 interface..."
+if ip link show wlan2; then
+  echo "wlan 2 exists, continuing.."
 else
   if [[ `iw list | grep '* AP'` == *"* AP"* ]]; then
     echo "wlan0 supports AP mode, creating AP interface.."
-    iw dev wlan0 interface add wlan1 type __ap
-    ip addr flush wlan1
-    ip addr flush wlan1
-    ip link set up dev wlan1
+    iw dev wlan0 interface add wlan2 type __ap
+    ip addr flush wlan2
+    ip addr flush wlan2
+    ip link set up dev wlan2
   else
     echo "wlan0 doesn't support AP mode, exiting.."
     exit 0
@@ -25,23 +25,23 @@ fi
 echo "Adding iptables for internet sharing..."
 iptables --flush
 
-ifconfig wlan1 up 10.0.0.1 netmask 255.255.255.0
+ifconfig wlan2 up 10.0.0.1 netmask 255.255.255.0
 route add -net 10.0.0.0 netmask 255.255.255.0 gw 10.0.0.1
 
-iptables -t nat -A PREROUTING -i wlan1 -p tcp --dport 80 -j DNAT --to-destination 10.0.0.1:80
+iptables -t nat -A PREROUTING -i wlan2 -p tcp --dport 80 -j DNAT --to-destination 10.0.0.1:80
 iptables --table nat --append POSTROUTING --out-interface rmnet_data2 -j MASQUERADE
-iptables --append FORWARD --in-interface wlan1 -j ACCEPT
+iptables --append FORWARD --in-interface wlan2 -j ACCEPT
 echo 1 > /proc/sys/net/ipv4/ip_forward
 
 ip rule add from all lookup main pref 1 2> /dev/null
-ip rule add from all iif lo oif wlan1 uidrange 0-0 lookup 97 pref 11000 2> /dev/null
+ip rule add from all iif lo oif wlan2 uidrange 0-0 lookup 97 pref 11000 2> /dev/null
 ip rule add from all iif lo oif rmnet_data2 lookup $table pref 17000 2> /dev/null
-ip rule add from all iif lo oif wlan1 lookup 97 pref 17000 2> /dev/null
-ip rule add from all iif wlan1 lookup $table pref 21000 2> /dev/null
+ip rule add from all iif lo oif wlan2 lookup 97 pref 17000 2> /dev/null
+ip rule add from all iif wlan2 lookup $table pref 21000 2> /dev/null
 
 echo "Starting"
-sleep 5 && sudo hostapd hostapd.conf &
+sleep 5 && hostapd hostapd.conf &
 sleep 5
-sudo dnsmasq -C dnsmasq.conf &
+dnsmasq -C dnsmasq.conf &
 sleep 5
-sudo nohup dnsspoof -i wlan1 > /dev/null 2>&1 &
+dnsspoof -i wlan2 > /dev/null 2>&1 &

