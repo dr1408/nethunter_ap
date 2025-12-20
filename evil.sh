@@ -70,14 +70,28 @@ cleanup() {
     if [ -n "$MON_INTERFACE" ]; then
         airmon-ng stop "$MON_INTERFACE" > /dev/null 2>&1
     fi
-    iptables --flush 2>/dev/null
-    ip rule del from all lookup main pref 1 2>/dev/null || true
-    ip rule del from all iif lo oif "$AP_INTERFACE" uidrange 0-0 lookup 97 pref 11000 2>/dev/null || true
-    if [ -n "$INTERNET_INTERFACE" ]; then
-        ip rule del from all iif lo oif "$INTERNET_INTERFACE" lookup main pref 17000 2>/dev/null || true
-    fi
-    ip rule del from all iif lo oif "$AP_INTERFACE" lookup 97 pref 17000 2>/dev/null || true
-    ip rule del pref 21000 2>/dev/null || true
+    
+    while iptables -t nat -D PREROUTING -i "$AP_INTERFACE" -p tcp --dport 80 -j DNAT --to-destination 10.0.0.1:80 2>/dev/null; do
+        :
+    done
+    while iptables -t nat -D POSTROUTING -o "$INTERNET_INTERFACE" -j MASQUERADE 2>/dev/null; do
+        :
+    done
+    iptables -D FORWARD -i "$AP_INTERFACE" -j ACCEPT 2>/dev/null || true
+    
+    while ip rule del pref 1 2>/dev/null; do
+        :
+    done
+    while ip rule del pref 11000 2>/dev/null; do
+        :
+    done
+    while ip rule del pref 17000 2>/dev/null; do
+        :
+    done
+    while ip rule del pref 21000 2>/dev/null; do
+        :
+    done
+    
     log_info "Cleaning up temporary files..."
     rm -f evil-*.cap evil-*.csv evil-*.kismet.* evil-*.netxml
     rm -f /tmp/target_bssid.txt /tmp/target_channel.txt /tmp/target_ssid.txt 
@@ -96,7 +110,6 @@ cleanup() {
     log_success "Cleanup complete"
     exit 0
 }
-
 trap cleanup SIGINT SIGTERM EXIT
 
 get_usb_device_info() {
