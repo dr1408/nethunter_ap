@@ -560,8 +560,8 @@ main() {
     select_adapter
     scan_networks
     capture_handshake "$TARGET_BSSID" "$TARGET_CHANNEL" "$TARGET_SSID"
+    select_interfaces 
     update_configs "$TARGET_BSSID" "$TARGET_CHANNEL" "$FAKE_SSID"
-    select_interfaces
     start_evil_twin
     monitor_attack "$TARGET_BSSID"
 }
