@@ -1,6 +1,6 @@
 Nethunter AP
 
-This eviltwin script lets you run a fake access point portal with handshake verification using a virtually created wlan2 on Kali Nethunter. You only need one external adapter for deauthing the original network. this script assume your external adapter is wlan1 and fake ap will run on wlan2.
+This eviltwin script lets you run a fake access point portal with handshake verification using a virtually created AP on Kali Nethunter. You only need one external adapter for deauthing the original network.
 
 
 Dependencies 
@@ -39,3 +39,15 @@ Credits
 · @ikteach - Script editing
 · @Justxd22 - Handshake verification methods and portals
     Check his repo: https://github.com/Justxd22/Eviltwin-Huawei_XD
+
+
+
+## ⚠️ Legal Disclaimer
+
+This tool is provided for **educational and authorized security testing purposes only**. 
+- Use only on networks you **own** or have **written permission** to test
+- Unauthorized access to computer networks is illegal
+- The author **is not responsible** for any misuse or damage caused by this tool
+- Users assume full responsibility for their actions
+
+By using this tool, you agree to use it **ethically and legally**.
