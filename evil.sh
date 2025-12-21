@@ -68,7 +68,9 @@ cleanup() {
     [ -n "$DEAUTH_PID" ] && kill $DEAUTH_PID 2>/dev/null
     [ -n "$AP_INTERFACE" ] && iw dev "$AP_INTERFACE" del > /dev/null 2>&1
     if [ -n "$MON_INTERFACE" ]; then
-        airmon-ng stop "$MON_INTERFACE" > /dev/null 2>&1
+        ifconfig "$MON_INTERFACE" down 2>/dev/null
+        iw dev "$MON_INTERFACE" set type managed 2>/dev/null
+        ifconfig "$MON_INTERFACE" up 2>/dev/null
     fi
     
     while iptables -t nat -D PREROUTING -i "$AP_INTERFACE" -p tcp --dport 80 -j DNAT --to-destination 10.0.0.1:80 2>/dev/null; do
@@ -114,7 +116,7 @@ trap cleanup SIGINT SIGTERM EXIT
 
 get_usb_device_info() {
     local iface="$1"
-    wireless_devices=$(lsusb | grep -i "wireless\\|network\\|wlan\\|rtl\\|atheros\\|ralink" | grep -v "root hub")
+    wireless_devices=$(lsusb | grep -i "wireless\\|network\\|wlan\\|mediatek\\|mt76\\|mt760\\|rtl\\|realtek\\|cypress\\|atheros\\|qualcomm\\|ralink\\|intel\\|broadcom" | grep -v "root hub")
     if [ -n "$wireless_devices" ]; then
         device_name=$(echo "$wireless_devices" | head -1 | sed 's/^.*ID [0-9a-f:]\+ //')
         echo "$device_name"
@@ -218,13 +220,24 @@ scan_networks() {
         log_error "No interface selected!"
         exit 1
     fi
-    sudo airmon-ng start "$SELECTED_INTERFACE" > /dev/null 2>&1
-    sleep 5
+    
+    log_info "Setting $SELECTED_INTERFACE to monitor mode..."
+    ifconfig "$SELECTED_INTERFACE" down 2>/dev/null
+    iw dev "$SELECTED_INTERFACE" set type monitor 2>/dev/null
+    ifconfig "$SELECTED_INTERFACE" up 2>/dev/null
+    sleep 2
+    
     MON_INTERFACE=$(get_monitor_interface)
     if [ -z "$MON_INTERFACE" ]; then
         log_error "Failed to detect monitor interface!"
         exit 1
     fi
+    
+    if ! iw dev "$MON_INTERFACE" info 2>/dev/null | grep -q "type monitor"; then
+        log_error "$MON_INTERFACE is not in monitor mode!"
+        exit 1
+    fi
+    
     log_success "Using monitor interface: $MON_INTERFACE"
     log_info "Scanning for 20 seconds..."
     { timeout --signal=KILL 20 airodump-ng $MON_INTERFACE --output-format csv -w /tmp/scan > /dev/null 2>&1; } 2>/dev/null || true
