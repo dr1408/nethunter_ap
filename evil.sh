@@ -431,7 +431,7 @@ setup_internet_sharing() {
     iptables --flush
     
     ifconfig "$AP_INTERFACE" up 10.0.0.1 netmask 255.255.255.0
-    route add -net 10.0.0.0 netmask 255.255.255.0 gw 10.0.0.1
+    
     
     iptables -t nat -A PREROUTING -i "$AP_INTERFACE" -p tcp --dport 80 -j DNAT --to-destination 10.0.0.1:80
     iptables --table nat --append POSTROUTING --out-interface "$INTERNET_INTERFACE" -j MASQUERADE
