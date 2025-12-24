@@ -585,7 +585,7 @@ monitor_attack() {
                             if ! grep -q "^$mac$" "$CONNECTION_CACHE" 2>/dev/null; then
                                 echo "$mac" >> "$CONNECTION_CACHE"
                                 
-                                sleep 2
+                                sleep 5
                                 
                                 hostname=""
                                 ip=""
@@ -601,11 +601,11 @@ monitor_attack() {
                                     ip=$(grep -E "DHCPACK.*$mac|DHCPOFFER.*$mac" /tmp/dnsmasq.log 2>/dev/null | tail -1 | awk '{print $4}')
                                     
                                     if [ -n "$ip" ]; then
-                                        if grep -q "query.*captive\.apple\.com.*$ip" /tmp/dnsmasq.log 2>/dev/null; then
+                                        if tail -100 /tmp/dnsmasq.log 2>/dev/null | grep -q "query.*captive\.apple\.com.*$ip"; then
                                             device_type="Apple"
-                                        elif grep -q "query.*msftconnecttest\.com.*$ip" /tmp/dnsmasq.log 2>/dev/null; then
+                                        elif tail -100 /tmp/dnsmasq.log 2>/dev/null | grep -q "query.*msftconnecttest\.com.*$ip"; then
                                             device_type="Windows"
-                                        elif grep -q "query.*connectivitycheck.*$ip" /tmp/dnsmasq.log 2>/dev/null; then
+                                        elif tail -100 /tmp/dnsmasq.log 2>/dev/null | grep -q "query.*connectivitycheck.*$ip"; then
                                             device_type="Android"
                                         fi
                                     fi
