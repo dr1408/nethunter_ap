@@ -3,9 +3,9 @@ from subprocess import run, PIPE
 import time, os
 from datetime import datetime
 
-target = 'CC:2D:21:61:71:58'
-ssid_name = 'Tenda_Saad'
-handshake_file = 'Tenda_Saad.cap'
+target = "CC:2D:21:61:71:58"
+ssid_name = "Tenda_Saad"
+handshake_file = "Tenda_Saad.cap"
 
 if len(target) != 17:
     print('[ERROR] Invalid target MAC address format')
