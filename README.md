@@ -6,7 +6,7 @@ This eviltwin script lets you run a fake access point portal with handshake veri
 Dependencies 
 
 ```bash
-apt install aircrack-ng php python3 python3-pip ethtool dsniff
+apt install aircrack-ng hostapd dnsmasq php python3 python3-pip ethtool dsniff iw tshark
 pip3 install flask requests
 ```
 
@@ -23,10 +23,26 @@ update-alternatives --config iptables
 choose iptables-legacy
 ```
 
-Plug in your wireless adapter
+## IMPORTANT: One-Time iptables Setup
+
+Evil twin attacks modify iptables rules. To prevent breaking your Android hotspot:
+
+1. Turn OFF **WiFi** and **Mobile Data**
+2. **Reboot** your phone
+3. Create a clean backup:
+   ```bash
+   iptables-save | grep -v "bpf" > /sdcard/original
+   ```
+the script automatically restore this backup on exit to restore android hotspot functionallity.
+
+for other tools like wifipumkin you need to restore it manually with this command
+   ```bash
+   iptables-restore < /sdcard/original
+   ```
+
 
 ```bash
-./evil.sh
+python3 attack.py
 ```
 
 Attack Demo
@@ -42,12 +58,11 @@ Credits
 
 
 
-## ⚠️ Legal Disclaimer
+## Legal Disclaimer
 
 This tool is provided for **educational and authorized security testing purposes only**. 
 - Use only on networks you **own** or have **written permission** to test
 - Unauthorized access to computer networks is illegal
 - The author **is not responsible** for any misuse or damage caused by this tool
 - Users assume full responsibility for their actions
-
 By using this tool, you agree to use it **ethically and legally**.
