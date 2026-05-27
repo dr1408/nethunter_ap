@@ -13,8 +13,8 @@ pip3 install flask requests
 Usage
 
 ```bash
-git clone https://github.com/dr1408/nethunter_ap.git
-cd nethunter_ap
+git clone https://github.com/dr1408/eviltwin.git
+cd eviltwin
 ```
 iptables
 
@@ -44,6 +44,12 @@ for other tools like wifipumkin you need to restore it manually with this comman
 ```bash
 python3 attack.py
 ```
+
+## NetHunter module
+
+make sure you clone it to  /  so you can use it with nethunter GUI module  ~> final path should be /eviltwin .. for the Nethunter module version important logs will be saved to sdcard .. better first to test the terminal version attack.py :)
+
+
 
 Attack Demo
 

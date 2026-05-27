@@ -557,6 +557,10 @@ class EvilTwinAttack:
         
         args = parser.parse_args()
         
+        # Clear old log file for fresh start
+        with open("/sdcard/evil_twin_debug.log", "w") as f:
+            f.truncate(0)
+        
         try:
             with open("/sdcard/evil_twin.pid", "w") as f:
                 f.write(str(os.getpid()))
